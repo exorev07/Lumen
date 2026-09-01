@@ -91,3 +91,82 @@ machine). Summary: re-pairing the bulb to new WiFi rotates the key;
 moving routers while keeping the same SSID does not. An expired Tuya free
 tier does not affect local control at all - it only blocks re-fetching
 the key, and a fresh cloud project restores that.
+
+## Where this is going
+
+Planned, not built yet:
+
+- a **terminal interface** (TUI) rather than one-shot commands
+- **music reactivity** - drive the colour from live audio
+
+Both need the device layer without the argument parsing, so `bulb.py`
+should be split before either lands: transport (`connect`, DPS reads and
+writes) in its own module, command/CLI layer on top. Doing it early is
+much cheaper than retrofitting it.
+
+The bigger constraint is that the current design opens a fresh connection
+per command, which is fine for a one-shot CLI and useless for audio -
+that path needs one persistent connection held open, and a cap on update
+rate so the bulb is not flooded.
+
+Nothing here is Syska-specific. `bulb.py` speaks Tuya 3.3 to a `dj`
+device, so it should work on most Tuya/SmartLife bulbs - worth keeping
+that generality when refactoring.
+
+## Before making the repo public
+
+Planned name is `lumen`; topics and description are chosen (tuya,
+smartlife, tuya-local, tinytuya, smart-bulb, local-control, tui, cli,
+music-reactive, syska among them). Start the remote **private** - it can
+be flipped public later, but not unpublished.
+
+Still to do:
+
+- **Rewrite `README.md` for someone else.** It currently reads as a
+  personal log - "setup state: fully working", "the local key is in
+  `local_secrets.py`" - which assumes a machine that is already
+  configured. A stranger arrives with no key, no device ID and no cloud
+  project, so it needs the from-zero path: install `tinytuya`, make a
+  Tuya IoT project, link the SmartLife account, run the wizard, copy
+  `local_secrets.example.py` to `local_secrets.py`, fill it in.
+- `CLAUDE.md` and `README.md` both point at `CREDENTIALS.md`, which is
+  gitignored. Those are dead links for anyone cloning - inline whatever
+  is not sensitive, or say plainly that the file is local-only.
+- Add a `LICENSE` (MIT unless there is a reason not to). Without one the
+  repo is not legally reusable, which defeats the point of publishing.
+- Re-check `.gitignore` against the tree one more time, and read the
+  diff in the GitHub UI before flipping public.
+
+## What `lumen` does that the alternatives do not
+
+Searching GitHub for "tuya" returns ~5k repos, so it is worth being
+clear about which ones overlap. Most do not:
+
+- `tuya-convert`, `tuya-cloudcutter` - reflash the device to escape Tuya
+  entirely. Far more invasive; stock firmware stays put here.
+- `TuyaOpen` - Tuya's SDK for *building* devices. Wrong side of the wire.
+- `tuya-home-assistant`, `tuya-homebridge` - go through the cloud API,
+  which is the round-trip this project exists to avoid.
+
+Two are genuinely adjacent:
+
+- `tuya-local`, `localtuya-homeassistant`, `homebridge-tuya` - local
+  control, same as here, but they are **plugins**: they only run inside
+  Home Assistant or Homebridge. Standing up a hub to toggle one bulb is
+  absurd, and that is the gap.
+- `tuyapi` - standalone and local, but a **Node library**, not a tool.
+  You write JS against it.
+
+And `tinytuya`, which this depends on, is a Python library plus a scan
+tool - not an application.
+
+So the differentiator is **a standalone terminal app you just run**: no
+hub, no plugin, no writing code against a library. Note that this is
+only true *once the TUI and music reactivity exist*. As it stands
+`bulb.py` is a thin CLI over `tinytuya` and is not novel enough to be
+worth publishing - hence: build those first, publish after.
+
+Pitch accordingly. Not "local Tuya control" - that ground is well
+covered and Home Assistant owns it. Rather: *control your bulb from the
+terminal, no hub required.* Keep the `tuya-local` topic anyway, to catch
+people who searched it and did not want to install Home Assistant.
