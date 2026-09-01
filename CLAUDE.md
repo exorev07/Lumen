@@ -115,10 +115,28 @@ that generality when refactoring.
 
 ## Before making the repo public
 
-Planned name is `lumen`; topics and description are chosen (tuya,
-smartlife, tuya-local, tinytuya, smart-bulb, local-control, tui, cli,
-music-reactive, syska among them). Start the remote **private** - it can
-be flipped public later, but not unpublished.
+The repo exists: **https://github.com/exorev07/Lumen** (note the
+capital L). It is MIT licensed - `LICENSE` came from GitHub's dropdown
+at creation, so the first push merged that commit in with
+`--allow-unrelated-histories`.
+
+Topics to set: tuya, smartlife, tuya-local, tinytuya, smart-bulb,
+smart-home, home-automation, local-control, iot, cli, tui, python,
+rgb-lighting, music-reactive, syska.
+
+Description while private, since the TUI does not exist yet:
+
+> Terminal app for Tuya / SmartLife smart bulbs - local LAN control, no
+> cloud round-trip.
+
+Swap to this when flipping public:
+
+> Terminal app for Tuya / SmartLife smart bulbs - local LAN, no cloud,
+> music-reactive. No hub required.
+
+Keep it under ~90 characters; GitHub truncates around 100-110 in search
+results. Public is a one-way door - it can be flipped later, but not
+unpublished.
 
 Still to do:
 
@@ -132,8 +150,6 @@ Still to do:
 - `CLAUDE.md` and `README.md` both point at `CREDENTIALS.md`, which is
   gitignored. Those are dead links for anyone cloning - inline whatever
   is not sensitive, or say plainly that the file is local-only.
-- Add a `LICENSE` (MIT unless there is a reason not to). Without one the
-  repo is not legally reusable, which defeats the point of publishing.
 - Re-check `.gitignore` against the tree one more time, and read the
   diff in the GitHub UI before flipping public.
 
