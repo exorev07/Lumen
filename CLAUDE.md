@@ -140,13 +140,30 @@ unpublished.
 
 Still to do:
 
-- **Rewrite `README.md` for someone else.** It currently reads as a
-  personal log - "setup state: fully working", "the local key is in
-  `local_secrets.py`" - which assumes a machine that is already
-  configured. A stranger arrives with no key, no device ID and no cloud
-  project, so it needs the from-zero path: install `tinytuya`, make a
-  Tuya IoT project, link the SmartLife account, run the wizard, copy
-  `local_secrets.example.py` to `local_secrets.py`, fill it in.
+- **Write a `README.md`.** There is no README at all right now - the
+  old one was deleted deliberately, because it read as a personal log
+  ("Status: working", "One-time setup (already done)") that assumed an
+  already-configured machine. A stranger arrives with no key, no device
+  ID and no cloud project.
+
+  The deleted file is not lost: it is in git history, and most of it was
+  reusable. Recover it with
+
+  ```
+  git show 7ccdb55:README.md
+  ```
+
+  and keep the parts that were already fine - the device blurb, the
+  layout table, install, the full usage list with named colours, and
+  especially the **step-by-step Tuya wizard walkthrough** (create the
+  cloud project in the matching data centre, subscribe to IoT Core /
+  Authorization / Scene Linkage, link the SmartLife account by QR, run
+  `python -m tinytuya wizard`, copy the key out of `devices.json`). That
+  walkthrough is the hard-won part and should not be rewritten from
+  scratch.
+
+  What to drop or rephrase: the "Status: working" section and the
+  "(already done)" framing, which only make sense on this machine.
 - `CLAUDE.md` and `README.md` both point at `CREDENTIALS.md`, which is
   gitignored. Those are dead links for anyone cloning - inline whatever
   is not sensitive, or say plainly that the file is local-only.
