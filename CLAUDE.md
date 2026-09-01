@@ -30,7 +30,8 @@ local_secrets.py           DEVICE_ID, LOCAL_KEY, IP        [gitignored]
 local_secrets.example.py   template
 bulb.cmd                   wrapper for  .\bulb <command>
 tuya-data/                 wizard/scan JSON output         [gitignored]
-CREDENTIALS.md             key + recovery procedures       [gitignored]
+TROUBLESHOOTING.md         failure modes and recovery - public
+CREDENTIALS.md             this machine's key + IDs         [gitignored]
 ```
 
 ## Usage
@@ -72,7 +73,7 @@ pause and fixes itself. A blank `IP` is fine - it will be discovered.
 
 It distinguishes two failures deliberately:
 - *not found on scan* -> bulb is off or on another network
-- *found but rejected* -> the local key has rotated, see `CREDENTIALS.md`
+- *found but rejected* -> the local key has rotated, see `TROUBLESHOOTING.md`
 
 ## Secrets policy
 
@@ -86,8 +87,9 @@ Consequence: pushing this repo backs up *nothing*. `local_secrets.py` and
 
 ## If the key stops working
 
-Full recovery procedure is in `CREDENTIALS.md` (gitignored, on this
-machine). Summary: re-pairing the bulb to new WiFi rotates the key;
+Public procedure is in `TROUBLESHOOTING.md`; this machine's actual key
+and IDs are in `CREDENTIALS.md` (gitignored). Summary: re-pairing the
+bulb to new WiFi rotates the key;
 moving routers while keeping the same SSID does not. An expired Tuya free
 tier does not affect local control at all - it only blocks re-fetching
 the key, and a fresh cloud project restores that.
@@ -164,9 +166,11 @@ Still to do:
 
   What to drop or rephrase: the "Status: working" section and the
   "(already done)" framing, which only make sense on this machine.
-- `CLAUDE.md` and `README.md` both point at `CREDENTIALS.md`, which is
-  gitignored. Those are dead links for anyone cloning - inline whatever
-  is not sensitive, or say plainly that the file is local-only.
+- ~~Dead `CREDENTIALS.md` links~~ - **done.** The generic recovery
+  procedure now lives in `TROUBLESHOOTING.md`, which is committed, and
+  the `bulb.py` error messages point there instead. `CREDENTIALS.md`
+  keeps only this machine's actual identifiers and stays gitignored.
+  Keep it that way: procedure is public, values are not.
 - Re-check `.gitignore` against the tree one more time, and read the
   diff in the GitHub UI before flipping public.
 

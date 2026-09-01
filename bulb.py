@@ -90,15 +90,16 @@ def connect():
     if not ip:
         sys.exit(
             "Could not find the bulb on this network.\n"
-            "Check that it is powered on and connected to the same WiFi. "
-            "See CREDENTIALS.md if the key may have rotated."
+            "Check that it is powered on and connected to the same WiFi.
+"
+            "See TROUBLESHOOTING.md if that does not help."
         )
 
     bulb = _build(ip)
     if not _reachable(bulb):
         sys.exit(
             "Found the bulb at %s but it rejected the connection.\n"
-            "The local key has probably rotated - see CREDENTIALS.md." % ip
+            "The local key has probably rotated - see TROUBLESHOOTING.md." % ip
         )
 
     _save_ip(ip)
