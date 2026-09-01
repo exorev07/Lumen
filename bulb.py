@@ -90,8 +90,7 @@ def connect():
     if not ip:
         sys.exit(
             "Could not find the bulb on this network.\n"
-            "Check that it is powered on and connected to the same WiFi.
-"
+            "Check that it is powered on and connected to the same WiFi.\n"
             "See TROUBLESHOOTING.md if that does not help."
         )
 
