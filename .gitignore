@@ -1,0 +1,13 @@
+# Secrets - device ID, local key, IP
+local_secrets.py
+CREDENTIALS.md
+
+# Tuya wizard/scan output (contains the local key and API credentials)
+tuya-data/*
+!tuya-data/README.md
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
