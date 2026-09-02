@@ -19,23 +19,31 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Footer, Input, Label, Static
 
-from device import COLORS, Bulb, BulbError, BulbState, parse_color
+from device import (COLORS, MODE_COLOUR, MODE_WHITE, Bulb, BulbError,
+                    BulbState, parse_color)
 
 # Trailing debounce on slider writes. Long enough to swallow a held arrow
 # key, short enough that a single tap still feels immediate.
 WRITE_DEBOUNCE = 0.15
 
 # How often to reconcile with the bulb, in seconds. Catches changes made
-# from the phone app or another terminal.
-POLL_INTERVAL = 5.0
+# from the phone app or another terminal. 5s made the status line feel
+# stale - a change from the phone took that long to show, and so did a
+# reading the bulb was slow to publish. The socket is serialised now, so
+# polling harder no longer risks colliding with a write.
+POLL_INTERVAL = 1.5
 
 # Consecutive failed reads before the bulb counts as gone. One dropped reply
-# is routine; three in a row (~15s of silence) means it really has left.
-POLL_FAILURES_BEFORE_LOST = 3
+# is routine. Expressed in seconds of silence rather than a count, so that
+# changing POLL_INTERVAL cannot quietly make the app trigger-happy about
+# declaring the bulb lost - at 1.5s a bare count of 3 would give up after
+# 4.5s, which is well inside a normal blip.
+SECONDS_BEFORE_LOST = 12.0
+POLL_FAILURES_BEFORE_LOST = max(3, round(SECONDS_BEFORE_LOST / POLL_INTERVAL))
 
 # Failures older than this start a fresh streak, so unrelated blips minutes
 # apart never add up to a false "lost contact".
-POLL_FAILURE_WINDOW = POLL_INTERVAL * 3
+POLL_FAILURE_WINDOW = SECONDS_BEFORE_LOST
 
 BAR_WIDTH = 24
 
@@ -130,6 +138,80 @@ class Bar(Widget, can_focus=True):
             self.refresh()
 
 
+class ModeTabs(Widget, can_focus=True):
+    """White / colour selector.
+
+    The bulb is only ever in one of these, and they are not cosmetic: white
+    mode dims on DPS 22 and has a colour temperature, colour mode dims on the
+    V of its HSV and ignores temperature entirely. Making the mode explicit is
+    what stops the two sets of controls looking like they contradict.
+    """
+
+    DEFAULT_CSS = """
+    ModeTabs {
+        height: 1;
+        width: 1fr;
+        margin: 0 0 1 0;
+    }
+    ModeTabs:focus { text-style: bold; }
+    """
+
+    BINDINGS = [
+        Binding("left", "step(-1)", "prev", show=False),
+        Binding("right", "step(1)", "next", show=False),
+        Binding("enter", "pick", "set", show=False),
+    ]
+
+    MODES = (MODE_WHITE, MODE_COLOUR)
+    LABELS = {MODE_WHITE: "white", MODE_COLOUR: "colour"}
+
+    mode = reactive(MODE_WHITE)
+
+    class Changed(Message):
+        def __init__(self, mode):
+            super().__init__()
+            self.mode = mode
+
+    def render(self):
+        caret = "[$primary]›[/]" if self.has_focus else " "
+        cells = []
+        for name in self.MODES:
+            label = self.LABELS[name]
+            if name == self.mode:
+                cells.append(f"[$primary reverse] {label} [/]")
+            elif self.has_focus:
+                cells.append(f"[$text] {label} [/]")
+            else:
+                cells.append(f"[$text-muted] {label} [/]")
+        tabs = " ".join(cells)
+        # "mode" + two padded labels needs ~28 cells. Below that, drop the
+        # label rather than let the tabs run off the right edge - the same
+        # thing Bar does with its track.
+        if self.size.width and self.size.width < 28:
+            return f"{caret}{tabs}"
+        return f"{caret}{'mode':<12}" + tabs
+
+    def on_resize(self, event):
+        # Only the crossing of the 28-cell threshold changes the output.
+        was = (self.size.width or 0) < 28
+        if was != (event.size.width < 28):
+            self.refresh()
+
+    def set_quietly(self, mode):
+        """Reflect the bulb without asking it to switch back."""
+        if mode in self.MODES:
+            self.mode = mode
+
+    def action_step(self, delta):
+        index = self.MODES.index(self.mode) + delta
+        if 0 <= index < len(self.MODES):
+            self.mode = self.MODES[index]
+            self.post_message(self.Changed(self.mode))
+
+    def action_pick(self):
+        self.post_message(self.Changed(self.mode))
+
+
 class Swatch(Static, can_focus=True):
     """One named colour. Enter or space sets it."""
 
@@ -203,6 +285,12 @@ class LumenApp(App):
     /* One cell of left padding lines these up with the bars, whose first
        cell is the focus caret. */
     #power, .section, #hex, #message { padding-left: 1; }
+
+    /* Warmth is meaningless in colour mode, so it is hidden there rather than
+       left on screen doing nothing. [hidden] removes it from the layout. */
+    #warmth.hidden, #swatches.hidden, #hex.hidden, #colour-label.hidden {
+        display: none;
+    }
 
     #power {
         height: 1;
@@ -321,8 +409,13 @@ class LumenApp(App):
         self.connected = False
         self._pending = {}      # what a debounced write should send
         self._debounce = {}     # per-control debounce timers
+        self._poll_timer = None     # stopped on unmount
         self._read_failures = 0     # consecutive failed polls
         self._last_failure = 0.0    # when the last one was
+        # What the user last asked each control to be, kept until the bulb
+        # reports that value back. A reading that disagrees is pre-write
+        # state that arrived late, and must not move the control.
+        self._intent = {}
 
     # -- layout ----------------------------------------------------------
 
@@ -333,10 +426,12 @@ class LumenApp(App):
         with panel:
             yield Label("connecting...", id="power")
 
+            yield ModeTabs(id="mode")
+
             yield Bar("brightness", minimum=1, id="brightness")
             yield Bar("warmth", id="warmth")
 
-            yield Label("colour", classes="section")
+            yield Label("colour", id="colour-label", classes="section")
             with Container(id="swatches"):
                 for name in COLORS:
                     yield Swatch(name, COLORS[name])
@@ -349,7 +444,7 @@ class LumenApp(App):
     def on_mount(self):
         self.reflow_swatches()
         self.connect()
-        self.set_interval(POLL_INTERVAL, self.poll)
+        self._poll_timer = self.set_interval(POLL_INTERVAL, self.poll)
 
     def on_resize(self, event):
         # Take the width from the event: self.size still holds the old one
@@ -410,6 +505,7 @@ class LumenApp(App):
 
     def _on_connected(self, state):
         self.connected = True
+        self._intent.clear()
         self._read_failures = 0
         self._last_failure = 0.0
         self._set_message("")
@@ -453,8 +549,72 @@ class LumenApp(App):
         self._read_failures = 0
         self.call_from_thread(self.apply_state, state)
 
-    def apply_state(self, state):
+    # How close a reading has to be before it counts as confirming what the
+    # user asked for. Brightness is 10-1000 internally, so a set of 40% can
+    # legitimately read back as 39% - see CLAUDE.md.
+    INTENT_TOLERANCE = 2
+
+    def apply_state(self, state, override=None):
+        """Render a reading from the bulb.
+
+        A poll can land while the app is shutting down, when the widgets are
+        already gone - so every query here has to tolerate NoMatches rather
+        than take the worker down with it.
+
+        Readings routinely arrive stale: the bulb publishes a write a beat
+        after accepting it, and a poll already blocked in read() when the
+        write went out returns pre-write data. Applying those verbatim is
+        what made a bar jump back to its old value for a few seconds before
+        settling on the new one.
+
+        So a control the user has just moved keeps showing their value until
+        a reading confirms it. `override` is the value we have this instant
+        written, which is newer than any reading in flight.
+        """
+        for name, value in (override or {}).items():
+            self._intent[name] = value
+        # Release the hold on any control the bulb has caught up with. This
+        # only decides which value each *bar* shows - `state` itself is left
+        # exactly as the bulb reported it, because the status line above is
+        # meant to report the bulb, not echo what was typed.
+        for name, current in (("brightness", state.brightness),
+                              ("warmth", state.warmth)):
+            want = self._intent.get(name)
+            if want is not None and abs(current - want) <= self.INTENT_TOLERANCE:
+                self._intent.pop(name, None)
         self.state = state
+        try:
+            self.render_status()
+        except NoMatches:
+            return      # unmounting; nothing left to draw on
+        # A control with a write still queued must not be touched at all, or
+        # the reading yanks it back under the user's fingers mid-drag. Where
+        # intent is still held the bar keeps showing it, so a stale reading
+        # cannot bounce it back; everything else follows the bulb.
+        try:
+            for name, selector in (("brightness", "#brightness"),
+                                   ("warmth", "#warmth")):
+                if name in self._pending:
+                    continue
+                reading = (state.brightness if name == "brightness"
+                           else state.warmth)
+                self.query_one(selector, Bar).set_quietly(
+                    self._intent.get(name, reading)
+                )
+            if "mode" not in self._pending:
+                self.query_one("#mode", ModeTabs).set_quietly(state.mode)
+            self.show_mode_controls(state.mode)
+        except NoMatches:
+            return
+
+    def render_status(self):
+        """The line at the top. Reads self.state, corrected by any intent.
+
+        Kept separate from apply_state so a keypress can refresh it straight
+        away: waiting for the write to make its round trip left the header
+        showing the old percentage for up to a second after the bar moved.
+        """
+        state = self.state
         power = self.query_one("#power", Label)
         dot = "[$success]●[/]" if state.power else "[$text-muted]○[/]"
         power.update(
@@ -462,9 +622,22 @@ class LumenApp(App):
             f"   [$text-muted]{state.brightness}% · {state.mode}[/]"
         )
         power.set_classes(["on" if state.power else "off"])
-        if not self._pending:
-            self.query_one("#brightness", Bar).set_quietly(state.brightness)
-            self.query_one("#warmth", Bar).set_quietly(state.warmth)
+
+    def show_mode_controls(self, mode):
+        """Only show the controls that do anything in this mode.
+
+        Warmth is a white-mode setting; the swatches and the hex input are
+        colour-mode ones. Leaving all of them on screen made the panel look
+        like it was ignoring half of them.
+        """
+        colour = mode == MODE_COLOUR
+        self.query_one("#warmth", Bar).set_class(colour, "hidden")
+        for selector in ("#swatches", "#hex", "#colour-label"):
+            self.query_one(selector).set_class(not colour, "hidden")
+        # Never leave focus on something that just disappeared.
+        focused = self.focused
+        if focused is not None and not focused.display:
+            self.query_one("#brightness", Bar).focus()
 
     def action_refresh_state(self):
         """Sync with the bulb. While disconnected this retries the connection
@@ -486,13 +659,20 @@ class LumenApp(App):
             return
         try:
             if what == "brightness":
-                self.bulb.set_brightness_pct(value)
+                # Pass the state we already hold: in colour mode brightness
+                # has to be written into the HSV, and re-reading here would
+                # cost another round trip on an already contended socket.
+                self.bulb.set_brightness_pct(value, state=self.state)
             elif what == "warmth":
                 self.bulb.set_warmth_pct(value)
             elif what == "power":
                 self.bulb.on() if value else self.bulb.off()
             elif what == "color":
-                self.bulb.set_color_rgb(*value)
+                # Keep the current brightness rather than letting the bulb
+                # jump to full whenever a swatch is picked.
+                self.bulb.set_color_rgb(*value, brightness=self.state.brightness)
+            elif what == "mode":
+                self.bulb.set_mode(value, state=self.state)
         except BulbError as exc:
             # Clear the entry too, or a single failed write leaves poll
             # blocked for the rest of the session.
@@ -511,20 +691,35 @@ class LumenApp(App):
     def _write_failed(self, what, value, text):
         if self._pending.get(what) == value:
             self._pending.pop(what, None)
+        # The bulb never took this value, so stop holding the control at it -
+        # otherwise a failed write pins the bar to a lie until the next one.
+        if self._intent.get(what) == value:
+            self._intent.pop(what, None)
         self._set_message(text, error=True)
 
     def _write_done(self, what, value, state):
         # Only clear the pending entry if it is still the value we just sent.
         # A newer change queued while this write was on the socket must keep
         # blocking poll, or a stale read yanks the bar back under the user.
-        if self._pending.get(what) == value:
+        settled = self._pending.get(what) == value
+        if settled:
             self._pending.pop(what, None)
         if state is not None:
-            self.apply_state(state)
+            # The read-back happens within milliseconds of the write, and the
+            # bulb has usually not published the new value yet - so `state`
+            # still carries the OLD one. Applying it wholesale made the bar
+            # jump back to where it started and sit there until the next poll
+            # corrected it, which is the twitch. What we just wrote is the
+            # authority for this control; take everything else from the read.
+            self.apply_state(state, override={what: value} if settled else None)
 
     def queue_write(self, what, value):
         """Coalesce rapid changes - only the last value in a burst is sent."""
         self._pending[what] = value
+        # Record the intent immediately, not when the write completes: a poll
+        # can land in between, and without this it would show the old value.
+        if what in ("brightness", "warmth"):
+            self._intent[what] = value
         timer = self._debounce.get(what)
         if timer is not None:
             timer.stop()
@@ -549,6 +744,16 @@ class LumenApp(App):
     def warmth_changed(self, event):
         self.queue_write("warmth", event.value)
 
+    @on(ModeTabs.Changed)
+    def mode_changed(self, event):
+        if not self.connected:
+            return
+        self._set_message(f"{event.mode} mode")
+        # Show the right controls immediately rather than waiting for the
+        # write to land and the next poll to report it back.
+        self.show_mode_controls(event.mode)
+        self.queue_write("mode", event.mode)
+
     @on(Swatch.Picked)
     def swatch_picked(self, event):
         self._set_message(f"set {event.name}")
@@ -564,6 +769,8 @@ class LumenApp(App):
             self._set_message("enter to set")
         elif isinstance(widget, Bar):
             self._set_message("← → to adjust")
+        elif isinstance(widget, ModeTabs):
+            self._set_message("← → to switch mode")
         elif isinstance(widget, Input):
             self._set_message("type a hex colour, enter to set")
 
@@ -604,20 +811,30 @@ class LumenApp(App):
                         column = min(row.index(focused), len(rows[target]) - 1)
                         rows[target][column].focus()
                     elif target < 0:
-                        self.query_one("#warmth", Bar).focus()
+                        # Warmth is hidden in colour mode, which is the only
+                        # mode the swatches are visible in - so this lands on
+                        # brightness in practice. Check anyway.
+                        warmth = self.query_one("#warmth", Bar)
+                        (warmth if warmth.display
+                         else self.query_one("#brightness", Bar)).focus()
                     else:
                         self.query_one("#hex", Input).focus()
                     return
 
-        # Everything else is a simple vertical stack. Entering the swatch
-        # grid from below lands on its bottom row, so up/down retrace.
-        entry = rows[0][0] if delta > 0 else rows[-1][0]
-        order = [
+        # Everything else is a simple vertical stack, minus whatever this
+        # mode hides - stepping onto an invisible control would look like the
+        # key had done nothing.
+        entry = None
+        if rows and rows[0]:
+            entry = rows[0][0] if delta > 0 else rows[-1][0]
+        candidates = [
+            self.query_one("#mode", ModeTabs),
             self.query_one("#brightness", Bar),
             self.query_one("#warmth", Bar),
             entry,
             self.query_one("#hex", Input),
         ]
+        order = [w for w in candidates if w is not None and w.display]
         if focused in order:
             index = order.index(focused) + delta
             if 0 <= index < len(order):
@@ -639,6 +856,12 @@ class LumenApp(App):
     # -- teardown --------------------------------------------------------
 
     def on_unmount(self):
+        # Stop polling before dropping the socket, so a poll cannot land on a
+        # half-torn-down screen. apply_state also guards for this, but not
+        # scheduling the work at all is the better half of the fix.
+        if self._poll_timer is not None:
+            self._poll_timer.stop()
+            self._poll_timer = None
         self.bulb.close()
 
 

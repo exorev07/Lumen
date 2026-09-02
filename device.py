@@ -10,6 +10,7 @@ DPS codes: 20 = switch, 21 = mode, 22 = brightness, 23 = colour temp,
 
 import os
 import re
+import threading
 from dataclasses import dataclass
 
 import tinytuya
@@ -56,7 +57,10 @@ def pct_to_raw(percent):
 
 
 def raw_to_pct(raw):
-    return round((raw - _RAW_MIN) / _RAW_SPAN * 100)
+    # Clamped: a bulb sitting at raw 0 (which colour mode can produce) would
+    # otherwise decode to -1%, and a negative percent blows up on the way back
+    # into tinytuya's 0-100 setters.
+    return max(0, min(100, round((raw - _RAW_MIN) / _RAW_SPAN * 100)))
 
 
 def parse_color(value):
@@ -74,6 +78,25 @@ def parse_color(value):
         raise BulbError(f"Invalid hex color {value!r}.") from None
 
 
+# The bulb's two modes. DPS 21 carries these strings verbatim.
+MODE_WHITE = "white"
+MODE_COLOUR = "colour"
+
+
+def hsv_value_pct(hsv):
+    """Brightness percent out of an HSV payload, or None if unreadable.
+
+    DPS 24 is 12 hex digits - hue, saturation, value - and the value shares
+    DPS 22's 10-1000 scale, so raw_to_pct decodes it unchanged.
+    """
+    if not hsv or len(hsv) < 12:
+        return None
+    try:
+        return raw_to_pct(int(hsv[8:12], 16))
+    except ValueError:
+        return None
+
+
 @dataclass
 class BulbState:
     """A decoded snapshot of the bulb."""
@@ -84,14 +107,36 @@ class BulbState:
     warmth: int = 0         # percent, 0 = warm, 100 = cool
     hsv: str = ""
 
+    @property
+    def is_colour(self):
+        return self.mode == MODE_COLOUR
+
     @classmethod
-    def from_dps(cls, dps):
-        state = cls(power=bool(dps.get("20")), mode=dps.get("21", "-"))
-        if "22" in dps:
-            state.brightness = raw_to_pct(dps["22"])
-        if "23" in dps:
-            state.warmth = round(dps["23"] / 1000 * 100)
-        state.hsv = dps.get("24") or ""
+    def from_dps(cls, dps, previous=None):
+        """Decode a status payload.
+
+        The bulb sometimes answers with a *partial* frame carrying only the
+        DPS that just changed. Anything absent keeps its previous value, or
+        a missing key would read as zero and blank the display for a tick.
+        """
+        base = previous or cls()
+        state = cls(
+            power=bool(dps["20"]) if "20" in dps else base.power,
+            mode=dps.get("21", base.mode),
+        )
+        state.brightness = (raw_to_pct(dps["22"]) if "22" in dps
+                            else base.brightness)
+        state.warmth = (round(dps["23"] / 1000 * 100) if "23" in dps
+                        else base.warmth)
+        state.hsv = dps.get("24") or base.hsv
+        # In colour mode the bulb ignores DPS 22 entirely - brightness is the
+        # V of the HSV in DPS 24, and 22 sits at whatever white mode left it.
+        # Reading 22 here made the bar snap back to its white-mode value the
+        # instant a colour was picked.
+        if state.is_colour:
+            value = hsv_value_pct(state.hsv)
+            if value is not None:
+                state.brightness = value
         return state
 
 
@@ -128,6 +173,13 @@ class Bulb:
         # saved address. The CLI sends it to stderr; the TUI shows it in-app.
         self._on_message = on_message
         self._dev = None
+        # Last fully decoded state, used to fill in partial status frames.
+        self._last_state = None
+        # One persistent socket, but the TUI polls and writes from separate
+        # worker threads. Interleaving two conversations on one TCP stream
+        # corrupts the framing and tinytuya reports "Unexpected Payload from
+        # Device", so every exchange takes this lock.
+        self._lock = threading.RLock()
 
     # -- connection ------------------------------------------------------
 
@@ -169,6 +221,14 @@ class Bulb:
                 "DEVICE_ID and LOCAL_KEY.\nSee README.md for how to get them."
             )
 
+        # Hold the lock across the whole reconnect: `r` can retry while a
+        # poll is still in flight, and swapping self._dev underneath a
+        # thread that is mid-exchange is the same framing corruption the
+        # lock exists to prevent.
+        with self._lock:
+            return self._open_locked()
+
+    def _open_locked(self):
         if config.IP:
             dev = self._build(config.IP)
             if self._reachable(dev):
@@ -197,12 +257,14 @@ class Bulb:
         return self
 
     def close(self):
-        if self._dev is not None:
-            try:
-                self._dev.close()
-            except Exception:
-                pass
-            self._dev = None
+        with self._lock:
+            self._last_state = None
+            if self._dev is not None:
+                try:
+                    self._dev.close()
+                except Exception:
+                    pass
+                self._dev = None
 
     def __enter__(self):
         return self.open()
@@ -221,7 +283,8 @@ class Bulb:
 
     def read(self):
         """Current state, decoded."""
-        data = self._device.status()
+        with self._lock:
+            data = self._device.status()
         if not isinstance(data, dict) or "dps" not in data:
             # tinytuya reports failures as a dict; surface its message rather
             # than the raw payload, which reads like a bug to a user.
@@ -232,31 +295,87 @@ class Bulb:
                 "Lost contact with the bulb%s." % (" (%s)" % detail if detail
                                                    else "")
             )
-        return BulbState.from_dps(data["dps"])
+        state = BulbState.from_dps(data["dps"], self._last_state)
+        self._last_state = state
+        return state
 
     def heartbeat(self):
         """Keep the persistent socket alive between polls."""
-        return self._device.heartbeat()
+        with self._lock:
+            return self._device.heartbeat()
 
     # -- writes ----------------------------------------------------------
 
     def on(self):
-        self._device.turn_on()
+        with self._lock:
+            self._device.turn_on()
 
     def off(self):
-        self._device.turn_off()
+        with self._lock:
+            self._device.turn_off()
 
     def toggle(self):
         """Flip the power. Returns the new state."""
-        is_on = self.read().power
-        self.off() if is_on else self.on()
-        return not is_on
+        # Read and write as one unit - the lock is reentrant, so the nested
+        # read() and on()/off() below reuse it rather than deadlocking.
+        with self._lock:
+            is_on = self.read().power
+            self.off() if is_on else self.on()
+            return not is_on
 
-    def set_brightness_pct(self, percent):
-        self._device.set_brightness(pct_to_raw(percent))
+    def set_brightness_pct(self, percent, state=None):
+        """Brightness, in whichever mode the bulb is currently in.
 
-    def set_color_rgb(self, r, g, b):
-        self._device.set_colour(r, g, b)
+        In colour mode this has to rewrite the V of the HSV in DPS 24 - the
+        bulb does not dim on DPS 22 while a colour is showing. Pass `state`
+        to save the extra read when the caller already has a fresh one.
+        """
+        with self._lock:
+            if state is None:
+                state = self.read()
+            if state.is_colour:
+                hsv = state.hsv or "000003e803e8"
+                hue = int(hsv[0:4], 16)
+                sat = int(hsv[4:8], 16)
+                self._device.set_hsv(hue / 360.0, sat / 1000.0, percent / 100.0)
+            else:
+                self._device.set_brightness(pct_to_raw(percent))
+
+    def set_color_rgb(self, r, g, b, brightness=None):
+        """Switch to colour mode.
+
+        tinytuya's set_colour sends the RGB at full value, so picking a swatch
+        used to jump the bulb back to 100%. Carrying the current brightness
+        across keeps it where the user left it.
+        """
+        with self._lock:
+            if brightness is None:
+                self._device.set_colour(r, g, b)
+                return
+            import colorsys
+            hue, value, sat = colorsys.rgb_to_hsv(r / 255.0, g / 255.0,
+                                                  b / 255.0)
+            self._device.set_hsv(hue, sat, brightness / 100.0)
+
+    def set_mode(self, mode, state=None):
+        """Switch between white and colour, preserving brightness.
+
+        Going to colour restores the last colour the bulb held rather than
+        defaulting to one, so flipping modes back and forth is lossless.
+        """
+        with self._lock:
+            if state is None:
+                state = self.read()
+            # `or 100` also catches a bulb sitting at 0 - writing value 0 back
+            # would set the colour to black rather than dimming it.
+            bright = state.brightness or 100
+            if mode == MODE_COLOUR:
+                hsv = state.hsv or "000003e803e8"
+                hue = int(hsv[0:4], 16)
+                sat = int(hsv[4:8], 16) or 1000
+                self._device.set_hsv(hue / 360.0, sat / 1000.0, bright / 100.0)
+            else:
+                self._device.set_white_percentage(bright, state.warmth)
 
     def set_warmth_pct(self, percent):
         """White mode at a colour temperature, 0 = warm, 100 = cool.
@@ -264,6 +383,10 @@ class Bulb:
         Reads the current brightness first and preserves it - this used to
         force 100%, which was wrong. Returns the brightness it kept.
         """
-        bright = self.read().brightness or 100
-        self._device.set_white_percentage(bright, percent)
-        return bright
+        # Read state, not just brightness: in colour mode the brightness now
+        # comes out of the HSV, and set_white_percentage switches the bulb to
+        # white mode anyway, so the value carried across is the visible one.
+        with self._lock:
+            bright = self.read().brightness or 100
+            self._device.set_white_percentage(bright, percent)
+            return bright

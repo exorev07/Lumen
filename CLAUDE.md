@@ -48,9 +48,12 @@ CREDENTIALS.md             this machine's key + IDs         [gitignored]
 
 `python bulb.py <command>` works identically.
 
-In the interface: `↑/↓` (or `tab`) move between controls. On a bar, `←/→`
-adjust it - `shift` for single steps, `home`/`end` to jump. On the swatch
-grid, `←/→` move along the row and `enter` picks. `space` toggles power,
+In the interface: `↑/↓` (or `tab`) move between controls. On the mode row,
+`←/→` switch between white and colour. On a bar, `←/→` adjust it -
+`shift` for single steps, `home`/`end` to jump. On the swatch grid, `←/→`
+move along the row and `enter` picks. The controls that do nothing in the
+current mode are hidden: warmth in colour mode, the swatches and hex input
+in white mode. `space` toggles power,
 `o`/`f` force on/off, `r` refreshes (and reconnects if the bulb has
 dropped), `q` quits.
 
@@ -70,6 +73,29 @@ dropped), `q` quits.
   a `.ps1` back.
 - **Brightness is 10-1000 internally,** so a set of 40% can read back as
   39%. That rounding is expected, not a bug.
+- **The bulb keeps two separate brightnesses, one per mode.** In *white*
+  mode brightness is DPS 22. In *colour* mode DPS 22 is ignored entirely
+  and brightness is the **V of the HSV in DPS 24** (same 10-1000 scale, so
+  `raw_to_pct` decodes it unchanged). `BulbState.from_dps` reads 22 only
+  when not in colour mode - reading it unconditionally was why picking a
+  colour and then dragging brightness made the bar snap back to the
+  white-mode value. `set_brightness_pct` writes to whichever the current
+  mode uses.
+- **`set_colour` sends RGB at full value,** so picking a swatch used to
+  jump the bulb to 100%. `set_color_rgb(..., brightness=)` converts to HSV
+  and carries the current level across instead.
+- **A raw value of 0 decodes to -1%** without the clamp in `raw_to_pct`,
+  and a negative percent raises `ValueError` inside tinytuya's
+  `set_white_percentage`. Colour mode really can leave DPS 24's value at 0.
+- **Status frames are sometimes partial** - the bulb answers with only the
+  DPS that just changed. `BulbState.from_dps` merges over the previous
+  state (`Bulb._last_state`) so an absent key keeps its value instead of
+  reading as zero and blanking the display for a tick. `close()` clears it
+  so a reconnect never carries stale state across.
+- **A read straight after a write can return the pre-write value.** Mode in
+  particular can lag one read behind the HSV. Allow ~1s to settle before
+  asserting on state - this is the same staleness noted for back-to-back
+  CLI commands, not a new bug.
 - **`warm` preserves current brightness** by reading state first. It used
   to force 100%, which was wrong. The TUI's warmth bar does the same.
 - **`self._timers` is taken by Textual.** Naming an attribute that on an
@@ -100,15 +126,39 @@ socket, so all of them run in `@work(thread=True)` workers and post back
 with `call_from_thread`. Anything added later must do the same or it will
 freeze the UI mid-render.
 
+**One socket, one conversation at a time.** `poll` and `write` are in
+different worker groups, so they genuinely run at the same time on
+different threads - and they share the single persistent socket. Two
+interleaved exchanges corrupt the stream's framing, and tinytuya surfaces
+that as **`Unexpected Payload from Device`** (`ERR_PAYLOAD`, a decode
+failure), which the TUI then showed as a red "Lost contact with the bulb"
+while the bulb was perfectly fine. `Bulb` therefore holds an `RLock` and
+every socket-touching method takes it. Reproduced at will by polling and
+writing on two threads at ~0.15s: 4 errors in 20s before the lock, 0
+after - and throughput roughly doubled, since nothing is lost to failed
+exchanges and retries. The lock is **reentrant** because several writes
+(`toggle`, `set_warmth_pct`, `set_mode`, `set_brightness_pct`) do a read
+first and must hold it across both halves. Anything added to `device.py`
+that touches `self._device` must take it too.
+
 - `connect` / `poll` / `write` are each `exclusive` workers in their own
   group, so a newer one cancels an older one still waiting on the socket.
 - `queue_write` is a **trailing debounce** (`WRITE_DEBOUNCE`, 150 ms).
   Holding an arrow key sends *one* write when you stop, not one per
   repeat. Verified: four rapid presses produce zero writes during the
   burst and one after.
-- `poll` runs every `POLL_INTERVAL` (5 s) to catch changes made from the
+- `poll` runs every `POLL_INTERVAL` (1.5 s) to catch changes made from the
   phone app, and **skips while a write is pending** so a stale read cannot
-  yank a bar back under the user's fingers.
+  yank a bar back under the user's fingers. It was 5 s, which made the status
+  line feel stale - a change made on the phone took that long to appear, as
+  did any value the bulb was slow to publish. Polling this hard is only safe
+  because the socket is serialised (see the lock above).
+- **Loss detection is in seconds, not polls.** `POLL_FAILURES_BEFORE_LOST` is
+  derived from `SECONDS_BEFORE_LOST` (12 s) and the poll interval, so
+  changing `POLL_INTERVAL` cannot quietly make the app trigger-happy. With a
+  bare count of 3, dropping the interval to 1.5 s would have declared the
+  bulb lost after 4.5 s of silence - well inside a normal blip, and the
+  "lost contact" flicker would have come straight back.
 - The debounce timers live in `self._debounce`. Do not call it
   `self._timers` - that collides with an internal Textual attribute and
   crashes on mount.
@@ -122,8 +172,47 @@ freeze the UI mid-render.
   sent.** Popping unconditionally lets a newer queued change stop blocking
   `poll`, and a stale read then yanks the bar back mid-drag. A *failed*
   write must clear it too, or one error blocks `poll` for the session.
+- **The status line reports the bulb; the bars follow the user.** These are
+  deliberately different. `apply_state` leaves `state` exactly as read, so
+  the header always shows what the bulb actually said - if a write is
+  refused, the bar shows what was asked for and the header keeps telling the
+  truth. Only the *bars* consult `_intent`. An earlier attempt had the header
+  echo the pending value to make it feel snappier; that defeats the point of
+  a status line and was reverted.
+- **A bar holds the user's value until the bulb confirms it** (`self._intent`).
+  This is what stops the bars visibly twitching back and forth. Two separate
+  sources of stale readings make it necessary, and `_pending` alone stops
+  neither:
+  - the bulb accepts a write but publishes the new value a beat later, so the
+    read-back straight after a write still reports the *old* one;
+  - a `poll` already blocked in `read()` when the write goes out returns
+    pre-write data and lands *after* `_pending` has been cleared.
 
-**Verified against the real bulb** (2026-09-02), not just a fake: the
+  So `apply_state` overrides a control with `_intent[name]` until a reading
+  comes back within `INTENT_TOLERANCE` (2%, since brightness is 10-1000
+  internally and 40% can read back as 39%), then releases it. `queue_write`
+  records the intent at *keypress* time, not on completion, or a poll landing
+  in between still shows the old value.
+
+  Three things must stay true, and each has a test: intent **releases** on
+  confirmation (or a change made from the phone app never reaches the bar
+  again), a **failed** write drops its intent (or the bar is pinned to a value
+  the bulb never took), and reconnecting clears it. A timestamp-based
+  "discard readings older than the last write" was tried first and does not
+  work - there is always a window where an in-flight read looks newer.
+- **Guard each bar separately, not on `self._pending` as a whole.** The old
+  `if not self._pending` froze brightness *and* warmth whenever any write was
+  outstanding, so a pending colour write stopped both bars updating.
+
+**Verified against the real bulb** (2026-09-02): the bars no longer twitch -
+dragging brightness or warmth gives a clean 40-45-50-55-60 with no bounce,
+in both modes, with the poll running 5x faster than normal to provoke the
+race. Confirmed by *disabling* the intent hold and watching the real bulb
+reproduce the reported 59 -> 39 -> 59 bounce, then restoring it. Also the
+two-brightness behaviour - picking a colour then dragging brightness holds at 30%
+and 75% instead of snapping back, brightness survives a mode switch in
+both directions, warmth forces white mode and keeps its level. Also, and
+earlier: the
 burst-across-an-in-flight-write pattern that produced the `None` crash,
 `warm` preserving brightness, named and hex colours, and toggle. Also
 measured for flakiness - 20 sequential reads and 12s of concurrent
@@ -134,8 +223,26 @@ a `warm` issued immediately after a `brightness` re-applied the old value.
 
 **Custom widgets.** Textual 8.x has no `Slider`, hence `Bar` - a focusable
 0-100 widget that renders its own track. `Swatch` is one named colour.
-Both post messages (`Bar.Changed`, `Swatch.Picked`) rather than touching
+`ModeTabs` is the white/colour selector. All three post messages
+(`Bar.Changed`, `Swatch.Picked`, `ModeTabs.Changed`) rather than touching
 the bulb directly.
+
+**The mode row is not cosmetic.** White and colour are genuinely different
+states on the bulb, with different brightness registers and only white
+having a colour temperature. `show_mode_controls()` therefore hides the
+controls that do nothing in the current mode - the warmth bar in colour
+mode, the swatches, the `colour` label and the hex input in white mode -
+via a `.hidden` class that sets `display: none`. Three consequences:
+
+- `action_move` builds its order from `w.display`, so up/down never steps
+  onto something invisible.
+- `show_mode_controls` refocuses `#brightness` if the focused widget just
+  disappeared, or focus would be stranded on a hidden control.
+- `mode_changed` calls it *immediately* rather than waiting for the write
+  and the next poll, so the panel updates the moment the key is pressed.
+
+`ModeTabs.render` drops its `mode` label below 28 columns, the same way
+`Bar` shrinks its track, instead of letting the tabs clip off the edge.
 
 **Layout rules that were arrived at by breaking them:**
 
@@ -164,6 +271,20 @@ the bulb directly.
 - `Bar` computes its track length from its own width and refreshes on
   resize, so a narrow terminal shrinks the bar instead of overflowing.
   Checked at 20, 30, 38, 46, 66, 100 and 150 columns.
+
+**A poll can land while the app is quitting.** `apply_state` queries
+`#power`, `#brightness` and friends from a worker callback, and on unmount
+those nodes are gone - the worker then dies with
+`NoMatches: No nodes match '#power'`. Two halves to the fix: `on_unmount`
+stops the poll timer *before* closing the socket so the work is never
+scheduled, and `apply_state` catches `NoMatches` anyway. Pressing `q` during
+an in-flight poll used to take a worker down with it.
+
+**`open()` holds the lock for the whole reconnect** (`_open_locked`). `r`
+can retry while a poll is still in flight, and swapping `self._dev`
+underneath a thread mid-exchange is the same framing corruption the lock
+exists to prevent. This means a reconnect's ~12s LAN scan blocks reads for
+its duration, which is correct - there is no usable socket during it anyway.
 
 **Failures render in-app**, never as a traceback: `Bulb` raises, the
 worker catches, and the text lands in `#message` with the same guidance
