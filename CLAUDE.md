@@ -24,7 +24,9 @@ linked, and the local key is in `local_secrets.py`.
 ## Layout
 
 ```
-bulb.py                    the CLI - all logic lives here
+device.py                  transport - connect, DPS reads and writes
+tui.py                     the terminal interface (Textual)
+bulb.py                    the CLI - argument parsing, dispatch
 config.py                  settings loader; env vars, then local_secrets.py
 local_secrets.py           DEVICE_ID, LOCAL_KEY, IP        [gitignored]
 local_secrets.example.py   template
@@ -37,6 +39,7 @@ CREDENTIALS.md             this machine's key + IDs         [gitignored]
 ## Usage
 
 ```
+.\bulb                        opens the terminal interface
 .\bulb status | on | off | toggle
 .\bulb brightness 60          1-100
 .\bulb color red              name or "#RRGGBB"
@@ -44,6 +47,12 @@ CREDENTIALS.md             this machine's key + IDs         [gitignored]
 ```
 
 `python bulb.py <command>` works identically.
+
+In the interface: `↑/↓` (or `tab`) move between controls. On a bar, `←/→`
+adjust it - `shift` for single steps, `home`/`end` to jump. On the swatch
+grid, `←/→` move along the row and `enter` picks. `space` toggles power,
+`o`/`f` force on/off, `r` refreshes (and reconnects if the bulb has
+dropped), `q` quits.
 
 ## Things that were learned the hard way
 
@@ -62,7 +71,12 @@ CREDENTIALS.md             this machine's key + IDs         [gitignored]
 - **Brightness is 10-1000 internally,** so a set of 40% can read back as
   39%. That rounding is expected, not a bug.
 - **`warm` preserves current brightness** by reading state first. It used
-  to force 100%, which was wrong.
+  to force 100%, which was wrong. The TUI's warmth bar does the same.
+- **`self._timers` is taken by Textual.** Naming an attribute that on an
+  `App` subclass crashes on mount with `'dict' object has no attribute
+  'add'`. The debounce timers are `self._debounce` for that reason.
+- **Textual 8.x ships no `Slider` widget.** The bars are the custom `Bar`
+  widget; do not go looking for a stock one.
 
 ## Behaviour worth knowing
 
@@ -74,6 +88,124 @@ pause and fixes itself. A blank `IP` is fine - it will be discovered.
 It distinguishes two failures deliberately:
 - *not found on scan* -> bulb is off or on another network
 - *found but rejected* -> the local key has rotated, see `TROUBLESHOOTING.md`
+
+## The TUI
+
+`tui.py`, on Textual (`textual>=8.0,<9`, in `requirements.txt` - the
+command-palette styling targets 8.x internals). One screen,
+`LumenApp`, plus two small custom widgets.
+
+**Threading is the thing to get right.** Every tinytuya call blocks on a
+socket, so all of them run in `@work(thread=True)` workers and post back
+with `call_from_thread`. Anything added later must do the same or it will
+freeze the UI mid-render.
+
+- `connect` / `poll` / `write` are each `exclusive` workers in their own
+  group, so a newer one cancels an older one still waiting on the socket.
+- `queue_write` is a **trailing debounce** (`WRITE_DEBOUNCE`, 150 ms).
+  Holding an arrow key sends *one* write when you stop, not one per
+  repeat. Verified: four rapid presses produce zero writes during the
+  burst and one after.
+- `poll` runs every `POLL_INTERVAL` (5 s) to catch changes made from the
+  phone app, and **skips while a write is pending** so a stale read cannot
+  yank a bar back under the user's fingers.
+- The debounce timers live in `self._debounce`. Do not call it
+  `self._timers` - that collides with an internal Textual attribute and
+  crashes on mount.
+- **The debounce must bind its value at schedule time.** The timer used to
+  fire `self.write(what, self._pending.get(what))`, reading the dict when
+  it fired. A write completing in between pops that entry, so the late
+  timer sent `None` into `pct_to_raw` -> `TypeError: unsupported operand
+  type(s) for /: 'NoneType' and 'int'`. It needs a burst straddling an
+  in-flight write, so it only shows up when actually dragging a bar.
+- **`_write_done` clears the pending entry only if it is still the value it
+  sent.** Popping unconditionally lets a newer queued change stop blocking
+  `poll`, and a stale read then yanks the bar back mid-drag. A *failed*
+  write must clear it too, or one error blocks `poll` for the session.
+
+**Verified against the real bulb** (2026-09-02), not just a fake: the
+burst-across-an-in-flight-write pattern that produced the `None` crash,
+`warm` preserving brightness, named and hex colours, and toggle. Also
+measured for flakiness - 20 sequential reads and 12s of concurrent
+poll+write traffic on two threads gave **zero** failures, which is why the
+blip tolerance above is a small retry threshold rather than something
+heavier. Note that back-to-back CLI commands can still read stale state:
+a `warm` issued immediately after a `brightness` re-applied the old value.
+
+**Custom widgets.** Textual 8.x has no `Slider`, hence `Bar` - a focusable
+0-100 widget that renders its own track. `Swatch` is one named colour.
+Both post messages (`Bar.Changed`, `Swatch.Picked`) rather than touching
+the bulb directly.
+
+**Layout rules that were arrived at by breaking them:**
+
+- The UI is one bordered panel **filling the terminal**. It is the app,
+  not a dialog - do not centre it or cap its width.
+- The swatches are **one reflowing grid**, not fixed rows. They used to be
+  two `Horizontal` rows of five, which meant a narrow terminal simply hid
+  the colours past the right edge. `#swatches` is a `layout: grid` whose
+  column count `reflow_swatches()` recomputes from the width, capped at
+  `SWATCH_COLUMNS` (5) so a wide terminal keeps the tidy two rows.
+  `grid-columns: 12` is fixed, otherwise the columns stretch apart to fill
+  the panel. Checked 20-150 columns: all ten stay visible.
+- **`on_resize` must use `event.size`, not `self.size`.** `self.size` still
+  holds the *old* width when the handler runs, so reflowing from it leaves
+  the layout one resize behind.
+- Anything walking the swatches must derive rows from the live column
+  count - `LumenApp.swatch_rows()` - rather than assuming two.
+- **Repaint only when the rendered output would actually differ.** Dragging
+  a window from 120 to 28 columns fires ~46 resize events but changes the
+  swatch column count 3 times and the `Bar` track ~5 times. Both handlers
+  compare before refreshing (`Bar.track_width(event.size.width)` against
+  the current one). Some flicker during a drag is the terminal repainting
+  its whole buffer and is not ours to fix - but do not add to it.
+- The focused control is marked with `›` in its first cell, so everything
+  else carries `padding-left: 1` to line up.
+- `Bar` computes its track length from its own width and refreshes on
+  resize, so a narrow terminal shrinks the bar instead of overflowing.
+  Checked at 20, 30, 38, 46, 66, 100 and 150 columns.
+
+**Failures render in-app**, never as a traceback: `Bulb` raises, the
+worker catches, and the text lands in `#message` with the same guidance
+the CLI prints. `focus_moved` writes hints to that same line but bails
+out while disconnected, so it cannot wipe an error message.
+
+**A dropped reply is not a disconnection.** tinytuya's socket timeout is
+5s and the bulb misses the odd status, so treating one failed read as
+"lost contact" made the message flicker while the bulb was fine. `poll`
+now needs `POLL_FAILURES_BEFORE_LOST` (3) failures *in a row* before it
+gives up, and `POLL_FAILURE_WINDOW` expires stale ones so isolated blips
+minutes apart never add up. The read-back after a write is the most
+contended moment on the socket - its failure is swallowed entirely, since
+the write already landed and the next poll re-syncs anyway.
+
+**Disconnection is recoverable without restarting.** `r`
+(`action_refresh_state`) polls while connected and **retries the
+connection while not** - which also re-runs the LAN scan, so it is the
+way back from a DHCP change. `connect()` calls `bulb.close()` first so a
+retry never reuses a dead socket. A failed `poll` marks the app
+disconnected rather than swallowing the error, which used to leave a
+stale reading on screen indefinitely after the bulb was switched off.
+`Bulb.read()` reports tinytuya's error text, not its raw payload dict.
+
+`ctrl+p` opens Textual's built-in command palette. The *commands* in it are
+free with `App` - they are not ours - but its **styling is**. By default it
+is a full-width slab pinned to the top of the terminal; `tui.py` restyles it
+into a centred overlay box (`width: 60`, `max-width: 90%`) with the same
+`round $primary` border as the panel. Removable with
+`ENABLE_COMMAND_PALETTE = False` if it ever gets in the way.
+
+Those selectors reach into textual 8.x internals, so **check them after a
+Textual upgrade**. Three things that are not obvious:
+
+- `CommandPalette > Vertical` (`#--container`) is `visibility: hidden`, so a
+  `background` set on it never paints and the panel shows through the
+  overlay. The opaque background and the border have to go on the visible
+  children - `#--input`, `CommandList`, `CommandInput`, `SearchIcon`.
+- `#--input` needs a fixed `height: 3`. `auto` adds a trailing blank line.
+- `SearchIcon` ships `margin-top: 1`. It looks like the stray blank line
+  above the search row, but zeroing it drops the icon and the input onto
+  different rows - leave it.
 
 ## Secrets policy
 
@@ -96,24 +228,34 @@ the key, and a fresh cloud project restores that.
 
 ## Where this is going
 
-Planned, not built yet:
+The **terminal interface** is built - `tui.py`, on Textual. The split it
+needed is done: `device.py` holds the transport (`Bulb`, DPS reads and
+writes) and knows nothing about argument parsing, `bulb.py` is the CLI on
+top, and both drive the same `Bulb` class.
 
-- a **terminal interface** (TUI) rather than one-shot commands
+Still planned:
+
 - **music reactivity** - drive the colour from live audio
 
-Both need the device layer without the argument parsing, so `bulb.py`
-should be split before either lands: transport (`connect`, DPS reads and
-writes) in its own module, command/CLI layer on top. Doing it early is
-much cheaper than retrofitting it.
+Two pieces of the TUI exist specifically for it and should be reused
+rather than rebuilt:
 
-The bigger constraint is that the current design opens a fresh connection
-per command, which is fine for a one-shot CLI and useless for audio -
-that path needs one persistent connection held open, and a cap on update
-rate so the bulb is not flooded.
+- `Bulb` holds **one persistent connection** (`set_socketPersistent`),
+  so the per-command connection cost is paid once. Audio cannot afford a
+  fresh connect per update.
+- `LumenApp.queue_write` is a **trailing debounce** (150 ms) and the
+  write worker is `exclusive`, so a burst of changes collapses to one
+  write and a newer write cancels an older one still on the socket. That
+  is the rate cap that keeps the bulb from being flooded; audio needs the
+  same thing with a shorter window.
 
-Nothing here is Syska-specific. `bulb.py` speaks Tuya 3.3 to a `dj`
+Ideas parked deliberately, not forgotten: adding the bulb's own commands
+(colours, presets) to the `ctrl+p` palette via a `Provider`. It works -
+it was built and then rewound - but the UI wants other tweaks first.
+
+Nothing here is Syska-specific. `device.py` speaks Tuya 3.3 to a `dj`
 device, so it should work on most Tuya/SmartLife bulbs - worth keeping
-that generality when refactoring.
+that generality.
 
 ## Before making the repo public
 
@@ -126,7 +268,8 @@ Topics to set: tuya, smartlife, tuya-local, tinytuya, smart-bulb,
 smart-home, home-automation, local-control, iot, cli, tui, python,
 rgb-lighting, music-reactive, syska.
 
-Description while private, since the TUI does not exist yet:
+Description while private (the TUI now exists, but music reactivity does
+not, so hold off on the second version until it does):
 
 > Terminal app for Tuya / SmartLife smart bulbs - local LAN control, no
 > cloud round-trip.
