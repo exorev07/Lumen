@@ -43,7 +43,7 @@ CREDENTIALS.md             this machine's key + IDs         [gitignored]
 .\bulb status | on | off | toggle
 .\bulb brightness 60          1-100
 .\bulb color red              name or "#RRGGBB"
-.\bulb warm 80                0 = warm, 100 = cool
+.\bulb warm 80                0 = cool, 100 = warm
 ```
 
 `python bulb.py <command>` works identically.
@@ -98,6 +98,43 @@ dropped), `q` quits.
   CLI commands, not a new bug.
 - **`warm` preserves current brightness** by reading state first. It used
   to force 100%, which was wrong. The TUI's warmth bar does the same.
+- **Warmth is inverted against the wire, on purpose.** DPS 23 is a *colour
+  temperature*: raw 0 is the lowest colour temperature and therefore the
+  **warmest** light, 1000 is cool blue-white. tinytuya passes the percentage
+  straight through (`set_white_percentage` does `value_max * pct // 100`), so
+  a bar labelled `warmth` that fed it directly went *cooler* as it rose - the
+  reported bug. `raw_to_warmth` / `warmth_to_raw_pct` in `device.py` do the
+  flip, and everything above the transport talks in warmth where **100 is
+  warm**. Consequences: `.\bulb warm 80` now means warm, not cool, which is a
+  deliberate reversal of what it used to do; `bulb.py` prints `Warmth:` rather
+  than `Colour temp:`. **`set_mode` has to re-encode** with `warmth_to_raw_pct`
+  when it carries `state.warmth` back to `set_white_percentage` - passing the
+  decoded value straight through would flip the temperature on every
+  colour->white switch. The round-trip is exact at all 101 values, which is
+  what keeps the TUI's `INTENT_TOLERANCE` reconciliation symmetric.
+- **Warmth must not re-send brightness in white mode.** `set_white_percentage`
+  takes brightness as a percent and does `1000 * pct // 100`, but `raw_to_pct`
+  decodes with the 10-1000 offset - so a raw->percent->raw round trip loses up
+  to 10 raw units, about 1%, *every call*. `set_warmth_pct` used to go through
+  it unconditionally, so dragging the warmth bar walked brightness down a point
+  per step: the reported "brightness changes erratically when I slide warmth".
+  In white mode it now calls `set_colourtemp` instead, which writes DPS 23
+  alone and leaves DPS 22 untouched. Verified: 12 warmth writes across the full
+  range, zero drift.
+- **But crossing from colour mode still has to carry brightness.** Colour
+  temperature only exists in white mode, so a warmth write from colour mode
+  switches modes, and the visible brightness moves from the HSV's V to DPS 22 -
+  which holds whatever white mode last left. `set_warmth_pct` therefore
+  branches on `state.is_colour`: `set_white_percentage` (carrying brightness)
+  when crossing, `set_colourtemp` (brightness untouched) when already white.
+  The TUI passes the state it holds, as it does for brightness. Verified with
+  the white register parked at 90% and the colour at 24%: the crossing holds
+  at 23%, where it used to jump to 90%.
+- **`colorsys.rgb_to_hsv` returns `(h, s, v)`.** `set_color_rgb` unpacked it as
+  `(hue, value, sat)`, swapping saturation and value. Invisible on the named
+  swatches, which are all fully saturated (S and V both 1.0), but any muted hex
+  colour came out oversaturated - teal `#508C82` (true S=0.43) was sent at
+  S=1.0. Found while chasing the warmth bug, fixed alongside it.
 - **`self._timers` is taken by Textual.** Naming an attribute that on an
   `App` subclass crashes on mount with `'dict' object has no attribute
   'add'`. The debounce timers are `self._debounce` for that reason.

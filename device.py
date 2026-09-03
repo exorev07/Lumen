@@ -63,6 +63,22 @@ def raw_to_pct(raw):
     return max(0, min(100, round((raw - _RAW_MIN) / _RAW_SPAN * 100)))
 
 
+def raw_to_warmth(raw):
+    """DPS 23 (0-1000) to warmth percent.
+
+    Inverted deliberately. DPS 23 is a *colour temperature*: raw 0 is the
+    lowest colour temperature, which is the warmest light, and 1000 is cool
+    blue-white. Every layer above this one talks in warmth, where 100 is
+    warm - so the flip happens here and nowhere else.
+    """
+    return max(0, min(100, 100 - round(raw / 1000 * 100)))
+
+
+def warmth_to_raw_pct(percent):
+    """Warmth percent to the colour-temperature percent tinytuya wants."""
+    return 100 - percent
+
+
 def parse_color(value):
     """Accept a named colour or a #RRGGBB / RRGGBB hex string."""
     if value.lower() in COLORS:
@@ -104,7 +120,7 @@ class BulbState:
     power: bool = False
     mode: str = "-"
     brightness: int = 0     # percent
-    warmth: int = 0         # percent, 0 = warm, 100 = cool
+    warmth: int = 0         # percent, 100 = warm, 0 = cool
     hsv: str = ""
 
     @property
@@ -126,7 +142,7 @@ class BulbState:
         )
         state.brightness = (raw_to_pct(dps["22"]) if "22" in dps
                             else base.brightness)
-        state.warmth = (round(dps["23"] / 1000 * 100) if "23" in dps
+        state.warmth = (raw_to_warmth(dps["23"]) if "23" in dps
                         else base.warmth)
         state.hsv = dps.get("24") or base.hsv
         # In colour mode the bulb ignores DPS 22 entirely - brightness is the
@@ -353,8 +369,12 @@ class Bulb:
                 self._device.set_colour(r, g, b)
                 return
             import colorsys
-            hue, value, sat = colorsys.rgb_to_hsv(r / 255.0, g / 255.0,
-                                                  b / 255.0)
+            # rgb_to_hsv returns (h, s, v) in that order. Unpacking it as
+            # (h, v, s) swapped saturation and value, which is invisible on
+            # a fully saturated swatch (both 1.0) but washes out any muted
+            # hex colour.
+            hue, sat, _value = colorsys.rgb_to_hsv(r / 255.0, g / 255.0,
+                                                   b / 255.0)
             self._device.set_hsv(hue, sat, brightness / 100.0)
 
     def set_mode(self, mode, state=None):
@@ -375,18 +395,41 @@ class Bulb:
                 sat = int(hsv[4:8], 16) or 1000
                 self._device.set_hsv(hue / 360.0, sat / 1000.0, bright / 100.0)
             else:
-                self._device.set_white_percentage(bright, state.warmth)
+                self._device.set_white_percentage(
+                    bright, warmth_to_raw_pct(state.warmth))
 
-    def set_warmth_pct(self, percent):
-        """White mode at a colour temperature, 0 = warm, 100 = cool.
+    def set_warmth_pct(self, percent, state=None):
+        """White mode at a given warmth, 100 = warm, 0 = cool.
 
         Reads the current brightness first and preserves it - this used to
         force 100%, which was wrong. Returns the brightness it kept.
+
+        Colour temperature only exists in white mode, so this switches the
+        bulb there. That crosses a register boundary: in colour mode the
+        visible brightness is the V of the HSV, while white mode dims on
+        DPS 22, which still holds whatever white mode last left. Writing
+        the *currently visible* brightness across keeps the light steady -
+        without it, nudging warmth while a colour was showing snapped
+        brightness to an unrelated value.
         """
-        # Read state, not just brightness: in colour mode the brightness now
-        # comes out of the HSV, and set_white_percentage switches the bulb to
-        # white mode anyway, so the value carried across is the visible one.
         with self._lock:
-            bright = self.read().brightness or 100
-            self._device.set_white_percentage(bright, percent)
+            if state is None:
+                state = self.read()
+            bright = state.brightness or 100
+            if state.is_colour:
+                # Crossing from colour to white: DPS 22 holds whatever white
+                # mode last left, so the visible brightness has to be carried
+                # over explicitly or the light jumps.
+                self._device.set_white_percentage(bright,
+                                                  warmth_to_raw_pct(percent))
+            else:
+                # Already in white mode, so DPS 22 is already right. Write the
+                # colour temperature alone rather than re-sending brightness:
+                # set_white_percentage would take it through a lossy
+                # percent->raw round trip (raw_to_pct accounts for the 10-1000
+                # offset, tinytuya's 1000*pct//100 does not), shaving ~1% off
+                # every call. Dragging the warmth bar walked brightness down a
+                # point per step because of it.
+                self._device.set_colourtemp(
+                    round(warmth_to_raw_pct(percent) / 100 * 1000))
             return bright

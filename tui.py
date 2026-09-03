@@ -664,7 +664,10 @@ class LumenApp(App):
                 # cost another round trip on an already contended socket.
                 self.bulb.set_brightness_pct(value, state=self.state)
             elif what == "warmth":
-                self.bulb.set_warmth_pct(value)
+                # Same reason as brightness: warmth forces white mode, and
+                # the state we hold says which register the visible
+                # brightness is currently in.
+                self.bulb.set_warmth_pct(value, state=self.state)
             elif what == "power":
                 self.bulb.on() if value else self.bulb.off()
             elif what == "color":

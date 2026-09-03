@@ -28,7 +28,7 @@ def show_status(bulb):
     print(f"Power      : {'on' if state.power else 'off'}")
     print(f"Mode       : {state.mode}")
     print(f"Brightness : {state.brightness}%")
-    print(f"Colour temp: {state.warmth}%")
+    print(f"Warmth     : {state.warmth}%")
     if state.hsv:
         print(f"Colour HSV : {state.hsv}")
 
@@ -53,7 +53,8 @@ def build_parser():
     p = sub.add_parser("color", help="set an RGB colour")
     p.add_argument("value", help="a colour name or #RRGGBB")
 
-    p = sub.add_parser("warm", help="white mode at a colour temperature 0-100")
+    p = sub.add_parser("warm",
+                       help="white mode at a warmth 0-100, 100 = warmest")
     p.add_argument("percent", type=int, choices=range(0, 101), metavar="0-100")
 
     return parser
@@ -79,7 +80,7 @@ def run_command(bulb, args):
         print(f"Colour {args.value} -> RGB({r}, {g}, {b})")
     elif args.cmd == "warm":
         bright = bulb.set_warmth_pct(args.percent)
-        print(f"White mode, colour temp {args.percent}% "
+        print(f"White mode, warmth {args.percent}% "
               f"(brightness {bright}%)")
 
 
