@@ -259,6 +259,16 @@ class Swatch(Static, can_focus=True):
             swatches[index].focus()
 
 
+def _unexpected(exc):
+    """Text for an exception that is not a BulbError.
+
+    Those are bugs, not the bulb being unreachable, so they read differently -
+    but they still have to reach the message line. An exception escaping a
+    worker takes the worker down and paints a traceback over the panel.
+    """
+    return "Unexpected %s: %s" % (type(exc).__name__, exc)
+
+
 class LumenApp(App):
     """The whole interface - one screen."""
 
@@ -501,6 +511,14 @@ class LumenApp(App):
                 self._on_disconnected, "%s\nPress r to try again." % exc
             )
             return
+        except Exception as exc:                      # noqa: BLE001
+            # Not a BulbError, so a bug rather than an unreachable bulb -
+            # tinytuya's DecodeError, a socket error, a missing attribute.
+            self.call_from_thread(
+                self._on_disconnected,
+                "%s\nPress r to try again." % _unexpected(exc),
+            )
+            return
         self.call_from_thread(self._on_connected, state)
 
     def _on_connected(self, state):
@@ -545,6 +563,14 @@ class LumenApp(App):
                     self._on_disconnected,
                     "%s\nPress r to reconnect." % exc,
                 )
+            return
+        except Exception as exc:                      # noqa: BLE001
+            # A bug, not a dropped reply: retrying will not help, so report it
+            # at once instead of counting it toward the blip tolerance.
+            self.call_from_thread(
+                self._on_disconnected,
+                "%s\nPress r to reconnect." % _unexpected(exc),
+            )
             return
         self._read_failures = 0
         self.call_from_thread(self.apply_state, state)
@@ -681,13 +707,22 @@ class LumenApp(App):
             # blocked for the rest of the session.
             self.call_from_thread(self._write_failed, what, value, str(exc))
             return
+        except Exception as exc:                      # noqa: BLE001
+            # This is the path that motivated the whole clause: a missing
+            # attribute killed the write worker, painted a traceback over the
+            # panel, and left _pending set so poll never resumed.
+            self.call_from_thread(self._write_failed, what, value,
+                                  _unexpected(exc))
+            return
 
         # The write landed. Reading back to confirm is the most contended
         # moment on the socket, so a failure here is not worth reporting -
         # the next poll picks the state up anyway.
         try:
             state = self.bulb.read()
-        except BulbError:
+        except Exception:                             # noqa: BLE001
+            # Swallowed deliberately, whatever the type: the write landed and
+            # the next poll re-syncs.
             state = None
         self.call_from_thread(self._write_done, what, value, state)
 

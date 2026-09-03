@@ -325,7 +325,21 @@ its duration, which is correct - there is no usable socket during it anyway.
 
 **Failures render in-app**, never as a traceback: `Bulb` raises, the
 worker catches, and the text lands in `#message` with the same guidance
-the CLI prints. `focus_moved` writes hints to that same line but bails
+the CLI prints. **That has to hold for unexpected exception types too.**
+Every worker catches `BulbError` for the expected failures and then
+`Exception` for everything else, formatted by `_unexpected()` as
+`Unexpected <Type>: <message>`. Without the second clause an exception
+escaping a `@work(thread=True)` worker kills it and Textual paints the
+traceback over the panel - and in `write` it also leaves `_pending` set,
+so `poll` stays blocked and the app is dead until restarted. This is not
+hypothetical: tinytuya exports `DecodeError`, which does not inherit from
+`BulbError`, and a socket dropped mid-call raises `OSError`. It was found
+when a stub missing `set_colourtemp` took the write worker down with an
+`AttributeError`. The two kinds read differently on purpose - a
+`BulbError` is the bulb being unreachable, an `Unexpected` is a bug worth
+reporting. The one place the distinction does not matter is the
+confirming read after a write, which swallows everything: the write
+already landed and the next poll re-syncs. `focus_moved` writes hints to that same line but bails
 out while disconnected, so it cannot wipe an error message.
 
 **A dropped reply is not a disconnection.** tinytuya's socket timeout is
