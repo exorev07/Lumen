@@ -400,6 +400,36 @@ the key, and a fresh cloud project restores that.
 
 ## Where this is going
 
+**The goal: a terminal app anyone with a Tuya/SmartLife device can
+install and run.** Not a personal script that happens to be shared - a
+thing a stranger installs, points at their own bulb, and uses. That is
+the bar every decision here should be measured against, and it is mostly
+a packaging and onboarding problem now rather than a protocol one: the
+hard part (local control without the cloud) works.
+
+What that implies, roughly in order:
+
+- **Onboarding a stranger.** Right now `local_secrets.py` is filled in by
+  hand and the key comes from running the Tuya wizard separately. A user
+  who has only ever used the SmartLife app needs to be walked from
+  nothing to a working key. The `README.md` walkthrough is step one;
+  doing it *inside* the app - a first-run setup screen - is the real fix.
+- **Installable.** `pip install` (or a single binary), not `git clone`
+  plus a `.cmd` shim sitting in the project folder.
+- **Multiple devices,** later. `Bulb` is deliberately one device with one
+  socket, and `config` holds a single `DEVICE_ID`/`LOCAL_KEY`/`IP`. Going
+  multi-device means a device *list* and a picker in the UI, with each
+  device holding its own connection. Worth keeping in mind when touching
+  either file - do not add anything that assumes there is exactly one
+  bulb forever - but not worth building until one device is genuinely
+  finished.
+
+Nothing here is Syska-specific, and that is load-bearing rather than
+incidental: `device.py` speaks Tuya 3.3 to a `dj` device, so it should
+already work on most Tuya/SmartLife colour bulbs. Keep that generality.
+Anything that only makes sense for this one bulb belongs behind a check,
+not baked into the transport.
+
 The **terminal interface** is built - `tui.py`, on Textual. The split it
 needed is done: `device.py` holds the transport (`Bulb`, DPS reads and
 writes) and knows nothing about argument parsing, `bulb.py` is the CLI on
@@ -424,10 +454,6 @@ rather than rebuilt:
 Ideas parked deliberately, not forgotten: adding the bulb's own commands
 (colours, presets) to the `ctrl+p` palette via a `Provider`. It works -
 it was built and then rewound - but the UI wants other tweaks first.
-
-Nothing here is Syska-specific. `device.py` speaks Tuya 3.3 to a `dj`
-device, so it should work on most Tuya/SmartLife bulbs - worth keeping
-that generality.
 
 ## Before making the repo public
 
@@ -513,10 +539,11 @@ And `tinytuya`, which this depends on, is a Python library plus a scan
 tool - not an application.
 
 So the differentiator is **a standalone terminal app you just run**: no
-hub, no plugin, no writing code against a library. Note that this is
-only true *once the TUI and music reactivity exist*. As it stands
-`bulb.py` is a thin CLI over `tinytuya` and is not novel enough to be
-worth publishing - hence: build those first, publish after.
+hub, no plugin, no writing code against a library. The TUI now exists, so
+half of that is true; what is still missing is the *just run* part - a
+stranger currently has to clone the repo and hand-fill a key. Closing
+that gap (see the onboarding and packaging points above) matters more to
+the pitch than any further feature does, music reactivity included.
 
 Pitch accordingly. Not "local Tuya control" - that ground is well
 covered and Home Assistant owns it. Rather: *control your bulb from the
