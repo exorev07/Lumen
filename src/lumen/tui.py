@@ -47,15 +47,33 @@ POLL_FAILURES_BEFORE_LOST = max(3, round(SECONDS_BEFORE_LOST / POLL_INTERVAL))
 # apart never add up to a false "lost contact".
 POLL_FAILURE_WINDOW = SECONDS_BEFORE_LOST
 
-BAR_WIDTH = 24
+# Bar track bounds. The track grows with the panel rather than stopping at a
+# fixed width: at 120 columns a 24-cell bar left most of the panel empty and
+# made the app look like a dialog that had been stretched. BAR_WIDTH_MAX keeps
+# a very wide terminal from turning the bars into one long thin line, where a
+# 1% step is several cells and the eye cannot judge the level.
+BAR_WIDTH_MIN = 8
+BAR_WIDTH_MAX = 72
 
-# Caret, block, space and the longest colour name ("magenta"). The swatch
-# grid divides the available width by this to decide how many fit per row.
+# The caret and the label that sit before the track. The click hit-testing
+# and render() both work off this, so a click cannot land on a different
+# cell than the one it appears to be over.
+BAR_CARET_CELLS = 1
+BAR_LABEL_CELLS = BAR_CARET_CELLS + 12
+
+# Everything on the row that is not track: the above, plus the gap, the
+# space and the 3-cell readout after it, plus the panel's right padding.
+BAR_CHROME = BAR_LABEL_CELLS + 1 + 3 + 3
+
+# Caret, block, space and the longest colour name ("magenta").
 SWATCH_WIDTH = 12
 
-# Preferred columns when there is room - two rows of five. A narrower
-# terminal uses fewer and wraps onto more rows.
-SWATCH_COLUMNS = 5
+# Swatch columns. Ten colours, so 5 gives the tidy two rows; a wide terminal
+# is allowed to go to 10 and put them on one line rather than leaving the
+# space unused. A narrower one wraps onto more rows.
+SWATCH_COLUMNS_MIN = 1
+SWATCH_COLUMNS_PREFERRED = 5
+SWATCH_COLUMNS_MAX = 10
 
 
 class Bar(Widget, can_focus=True):
@@ -99,11 +117,18 @@ class Bar(Widget, can_focus=True):
         self.minimum = minimum
 
     def track_width(self, width=None):
-        """Track fills whatever is left after the label and the readout, so
-        the bar still works when the panel is narrower than its maximum."""
+        """Track fills whatever the label and readout leave, within bounds.
+
+        It grows with the panel instead of stopping at a fixed width - a
+        24-cell bar in a 120-column terminal was most of why the app looked
+        like a stretched dialog. Still clamped at both ends: below
+        BAR_WIDTH_MIN there is nothing to read, and past BAR_WIDTH_MAX a
+        single step is several cells wide and the level gets harder, not
+        easier, to judge.
+        """
         if width is None:
             width = self.size.width
-        return max(4, min(BAR_WIDTH, width - 17))
+        return max(BAR_WIDTH_MIN, min(BAR_WIDTH_MAX, width - BAR_CHROME))
 
     def render(self):
         width = self.track_width()
@@ -545,9 +570,17 @@ class LumenApp(App):
     }
     #hex:focus { background: $boost; }
 
+    /* Absorbs the leftover height, pushing #message to the bottom of the
+       panel. min-height 0 so a short terminal gives it nothing rather than
+       squeezing a control off the screen. */
+    #spacer {
+        height: 1fr;
+        min-height: 0;
+    }
+
     #message {
         height: auto;
-        margin: 1 0 0 0;
+        margin: 0;
         color: $text-muted;
         text-style: dim;
     }
@@ -648,6 +681,19 @@ class LumenApp(App):
                     yield Swatch(name, COLORS[name])
 
             yield Input(placeholder="#rrggbb", id="hex")
+
+            # Takes up the slack, so the message line sits on the panel's
+            # bottom edge rather than floating under the controls with the
+            # rest of the panel empty beneath it - and fills that space with
+            # the bulb's current colour instead of nothing. Height 1fr, so a
+            # short terminal gives it nothing and the controls still fit.
+            # Takes up the slack so the message line sits on the panel's
+            # bottom edge instead of floating under the controls with the
+            # rest of the panel empty beneath it. Height 1fr, so it is
+            # whatever is left after the fixed-height controls above - and
+            # nothing at all when the terminal is too short to spare any.
+            yield Static("", id="spacer")
+
             yield Static("", id="message")
 
         yield Footer()
@@ -684,10 +730,22 @@ class LumenApp(App):
         if width is None:
             width = self.size.width
         # The panel's border and padding cost 6 cells; each swatch needs
-        # SWATCH_WIDTH. Capped at SWATCH_COLUMNS so a wide terminal keeps the
-        # two tidy rows rather than stretching into one long line.
+        # SWATCH_WIDTH.
         usable = width - 6
-        columns = max(1, min(SWATCH_COLUMNS, usable // SWATCH_WIDTH))
+        fits = usable // SWATCH_WIDTH
+
+        # Prefer the tidy 5-wide pair of rows. Only go wider when *all ten*
+        # fit on one line - anything between leaves a ragged half-row (7
+        # columns puts 3 on the second), which looks worse than the pair.
+        # Narrower wraps onto more rows rather than hiding the colours past
+        # the right edge, which is what fixed rows used to do.
+        if fits >= SWATCH_COLUMNS_MAX:
+            columns = SWATCH_COLUMNS_MAX
+        elif fits >= SWATCH_COLUMNS_PREFERRED:
+            columns = SWATCH_COLUMNS_PREFERRED
+        else:
+            columns = max(SWATCH_COLUMNS_MIN, fits)
+
         if grid.styles.grid_size_columns != columns:
             grid.styles.grid_size_columns = columns
 
