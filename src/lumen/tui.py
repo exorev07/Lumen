@@ -71,10 +71,12 @@ SWATCH_WIDTH = 12
 # Swatch columns. Ten colours, so 5 gives the tidy two rows; a wide terminal
 # is allowed to go to 10 and put them on one line rather than leaving the
 # space unused. A narrower one wraps onto more rows.
-# Below this many rows the panel drops its inter-control gaps - see
-# reflow_spacing(). 16 is the point at which the full white-mode layout
-# (power, mode, both bars, message, borders) still fits with the gaps in.
-COMPACT_ROWS = 16
+# Below this many rows the panel drops the gap under the mode row - see
+# reflow_spacing(). Measured, not guessed: with the gap in, the full
+# white-mode layout (power, mode, both bars, message, borders) keeps both
+# bars down to 12 rows and loses warmth at 11. Raising this collapses the
+# gap on terminals that can afford it; lowering it costs a bar.
+COMPACT_ROWS = 12
 
 SWATCH_COLUMNS_MIN = 1
 SWATCH_COLUMNS_PREFERRED = 5
@@ -640,16 +642,13 @@ class LumenApp(App):
     #power.on { color: $success; }
     #power.off { color: $text-muted; }
 
-    /* A blank line between the bars. They are separate controls and the
-       arrow keys act on one at a time, so stacking them flush made the pair
-       look like a single two-row widget. The margin is on the bottom, and
-       #warmth is the last bar, so hiding warmth in colour mode does not
-       leave a stray gap. */
-    Bar { margin: 0 0 1 0; }
+    /* The bars stack flush. A gap between them was tried and removed - the
+       pair reads as one control group, and separating them just spread the
+       panel out without making either easier to find. */
+    Bar { margin: 0 0 0 0; }
 
-    /* A short terminal cannot afford the gaps - see reflow_spacing(). */
+    /* A short terminal cannot afford the mode gap - see reflow_spacing(). */
     #panel.compact ModeTabs { margin: 0 0 1 0; }
-    #panel.compact Bar { margin: 0; }
 
     .section {
         height: 1;
