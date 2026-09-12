@@ -29,9 +29,11 @@ macOS     ~/Library/Application Support/lumen/config.toml
 Linux     $XDG_CONFIG_HOME/lumen/config.toml, else ~/.config/lumen/
 ```
 
-`lumen config` prints the path. `local_secrets.py` is still *read* as a
-migration path so this machine kept working across the restructure, but
-nothing writes it any more - see the settings notes below.
+`lumen config` prints the path. A pre-0.1 `local_secrets.py` in the working
+directory is read **once**, on first run, and its values are written into
+the config file above - so this machine upgraded without re-running the
+wizard. Nothing writes `local_secrets.py` any more, and once the config
+file exists it is never consulted again. See the settings notes below.
 
 ## Layout
 
@@ -90,6 +92,15 @@ dropped), `q` quits.
   `bulb color #ff8800` silently drops the value. `"#ff8800"` works.
 - **Do not name the secrets file `secrets.py`** - it shadows the stdlib
   `secrets` module. Hence `local_secrets.py`.
+- **`pip install` puts `lumen.exe` somewhere not on PATH.** On this machine
+  pip is a user install, so console scripts land in
+  `%APPDATA%\Python\Python312\Scripts`, which Windows does not add to PATH
+  for you - `pip` warns about it and the command is then "not recognized"
+  despite installing fine. That directory is now on the user PATH (added
+  2026-09-12, along with collapsing 58 duplicated entries down to 37; the
+  triplication was pre-existing). Two consequences: a **new terminal** is
+  needed after any PATH change, since a running process cannot see one, and
+  `python -m lumen.cli <command>` always works as a fallback.
 - **Writing to `~\Documents` is blocked** by Windows Defender's
   Controlled Folder Access, even as Administrator. A PowerShell `$PROFILE`
   shortcut cannot be installed without allowing `pwsh.exe` through it.
@@ -172,8 +183,8 @@ dropped), `q` quits.
 ## Behaviour worth knowing
 
 `connect()` is self-healing: it tries the saved IP, and if the bulb does
-not answer it scans the LAN, matches on device ID, writes the new address
-into `local_secrets.py` and carries on. So a DHCP change costs one ~12s
+not answer it scans the LAN, matches on device ID, saves the new address
+to the config file and carries on. So a DHCP change costs one ~12s
 pause and fixes itself. A blank `IP` is fine - it will be discovered.
 
 It distinguishes two failures deliberately:
@@ -210,6 +221,23 @@ a TOML file in the per-user config dir. Consequences:
   backslash and quote, verified round-tripping both.
 - **A malformed config is not fatal.** It is treated as absent, so the app
   opens on Settings instead of tracebacking on a hand-edited typo.
+- **The legacy migration is parsed, not imported, and it persists.** Reading
+  a pre-0.1 `local_secrets.py` with `import local_secrets` cannot work for an
+  installed console script: `sys.path[0]` is the *Scripts* directory and the
+  working directory is never on it, so the import could not succeed however
+  the command was invoked. It silently never fired for the one case it existed
+  to serve, and passed its tests only because those ran under `python` with
+  the project directory on the path. `ast.parse` now pulls the three string
+  literals out without executing the file.
+
+  It also **saves** what it migrated on first run. Reading the old values
+  without persisting them left the installed command working only while the
+  cwd happened to be the old checkout, and reporting itself unconfigured from
+  anywhere else - which defeats the point of installing it. Lesson worth
+  keeping: **test the installed artifact, not the source tree.** Anything that
+  depends on `sys.path`, the cwd, or a file sitting next to the code behaves
+  differently once installed, and the `src/` layout exists to make that
+  divergence obvious rather than surprising.
 - **Env vars are `LUMEN_*`,** with `SYSKA_*` kept as aliases - nothing here
   is Syska-specific. They win over the file, so the Settings screen says
   which fields the environment has pinned rather than letting an edit
@@ -328,6 +356,16 @@ that touches `self._device` must take it too.
 - **Guard each bar separately, not on `self._pending` as a whole.** The old
   `if not self._pending` froze brightness *and* warmth whenever any write was
   outstanding, so a pending colour write stopped both bars updating.
+
+**Verified as an installed package** (2026-09-12): a wheel and sdist build,
+install into clean venvs, and `lumen` runs off PATH from an arbitrary
+directory - `status`, `brightness`, a muted hex colour and `warm` all correct
+against the real bulb, which was left as found. Headless Textual tests cover
+the Settings screen auto-opening when unconfigured, validation, prefill, the
+key being masked, a 40x20 layout, and save-adopt-reconnect. Neither build
+artifact contains any secret value. **Only checked on Windows** - the macOS
+and Linux branches of `config_dir()` are conventional but unexercised, so
+claiming cross-platform support wants a real run on one of them first.
 
 **Verified against the real bulb** (2026-09-02): the bars no longer twitch -
 dragging brightness or warmth gives a clean 40-45-50-55-60 with no bounce,
