@@ -17,6 +17,7 @@ Nothing in this module identifies a device. The file it writes does, and it
 is deliberately outside the repository.
 """
 
+import ast
 import os
 import sys
 import tomllib
@@ -145,36 +146,65 @@ def _read_file(path):
     return section if isinstance(section, dict) else {}
 
 
-def _legacy_values():
-    """Values from an old top-level local_secrets.py, if one is importable.
+_LEGACY_FIELDS = {"DEVICE_ID": "device_id", "LOCAL_KEY": "local_key",
+                  "IP": "ip"}
 
-    Pre-0.1 installs kept the key in a Python module next to the code. Reading
-    it here means an existing checkout keeps working after the restructure
-    without the user re-running the Tuya wizard. Only ever read, never written.
+
+def _legacy_values():
+    """Values from a pre-0.1 local_secrets.py sitting in the working directory.
+
+    Pre-0.1 installs kept the key in a Python module next to the code, so an
+    existing checkout would otherwise have to re-run the Tuya wizard after the
+    restructure. Read once, on the way to writing the real config file; never
+    written back.
+
+    Deliberately *parsed*, not imported. `import local_secrets` only works when
+    the module's directory is on sys.path, and for an installed console script
+    sys.path[0] is the Scripts directory - the working directory is never on
+    it. So the import approach silently never fired for the case it existed
+    for. It is also better not to execute a file we only want three strings
+    from.
     """
+    path = Path.cwd() / "local_secrets.py"
     try:
-        import local_secrets
-    except Exception:
-        # ImportError normally, but a broken hand-edited file can raise
-        # anything at all on import, and that must not stop the app starting.
+        source = path.read_text(encoding="utf-8")
+    except OSError:
         return {}
-    return {
-        "device_id": getattr(local_secrets, "DEVICE_ID", ""),
-        "local_key": getattr(local_secrets, "LOCAL_KEY", ""),
-        "ip": getattr(local_secrets, "IP", ""),
-    }
+
+    # Only literal `NAME = "value"` assignments, via the AST - no execution.
+    try:
+        tree = ast.parse(source, str(path))
+    except SyntaxError:
+        return {}
+
+    found = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        value = node.value
+        if not (isinstance(value, ast.Constant) and isinstance(value.value, str)):
+            continue
+        for target in node.targets:
+            field = _LEGACY_FIELDS.get(getattr(target, "id", None))
+            if field:
+                found[field] = value.value
+    return found
 
 
 def load(path=None):
-    """Build Settings from the environment, then the file, then the legacy
-    module. Never raises."""
+    """Build Settings from the environment, then the config file, then a
+    pre-0.1 local_secrets.py. Never raises."""
     target = Path(path) if path else config_path()
     values = _read_file(target)
+    migrated = False
 
     if not any(values.get(k) for k in ("device_id", "local_key")):
         # Nothing on disk yet - fall back to a pre-0.1 local_secrets.py so an
         # upgrade in place does not look like a fresh install.
-        values = {**_legacy_values(), **values}
+        legacy = _legacy_values()
+        if legacy:
+            values = {**legacy, **values}
+            migrated = True
 
     resolved = {}
     from_env = set()
@@ -186,7 +216,20 @@ def load(path=None):
         else:
             resolved[field] = str(values.get(field) or "")
 
-    return Settings(from_env=frozenset(from_env), **resolved)
+    settings = Settings(from_env=frozenset(from_env), **resolved)
+
+    # Persist a migration the first time it happens. Without this the values
+    # are only visible while the working directory happens to be the old
+    # checkout, so the installed command would report itself unconfigured from
+    # anywhere else - which defeats the point of installing it. Best effort:
+    # a failure here just means it migrates again next time.
+    if migrated and settings.is_configured:
+        try:
+            settings.save(target)
+        except OSError:
+            pass
+
+    return settings
 
 
 def with_ip(settings, ip):
