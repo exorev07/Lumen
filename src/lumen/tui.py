@@ -702,7 +702,19 @@ class LumenApp(App):
             self.call_from_thread(self._set_message, text, error)
 
     def _set_message(self, text, error=False):
-        widget = self.query_one("#message", Static)
+        """Write to the message line, if there is one to write to.
+
+        `#message` lives on the main panel, so it is absent in two situations
+        that both reach here: before compose has mounted it (a DescendantFocus
+        fires as the first Bar takes focus, which is early enough to lose the
+        race) and while a modal screen is on top. Neither is worth an
+        exception - a hint nobody can see is not an error, and raising from a
+        focus handler crashes the app with a traceback over the panel.
+        """
+        try:
+            widget = self.query_one("#message", Static)
+        except NoMatches:
+            return
         widget.update(text)
         widget.set_class(error, "error")
 
