@@ -51,7 +51,7 @@ local_secrets.py           pre-0.1 secrets, read only for migration
                                                            [gitignored]
 ```
 
-Installed as **`lumen-bulb`** on PyPI (plain `lumen` is taken) but the
+Installed as **`lumen-control`** on PyPI (plain `lumen` is taken) but the
 command it installs is `lumen`. The `src/` layout is deliberate: it makes
 it impossible to import the package from the source tree by accident, so
 a broken wheel cannot pass tests locally.
@@ -182,7 +182,7 @@ It distinguishes two failures deliberately:
 
 ## Settings and packaging
 
-The app is a **package**, installed as `lumen-bulb`, providing the `lumen`
+The app is a **package**, installed as `lumen-control`, providing the `lumen`
 command. `pip install -e .` for development. Verified end to end: a wheel
 builds, installs into a clean venv, and `lumen` works off PATH with no
 `PYTHONPATH` and no project directory.
@@ -233,7 +233,7 @@ an app you just run. It is a `ModalScreen`; the steps scroll in a
 - A failed save reports the error rather than dismissing - Controlled
   Folder Access is a real possibility on this machine.
 
-Not done yet: **publishing.** `lumen-bulb` is confirmed free on PyPI but
+Not done yet: **publishing.** `lumen-control` is confirmed free on PyPI but
 nothing is uploaded; a first upload is irreversible, so it wants a
 deliberate `twine upload`. After that, a **PyInstaller `.exe` on GitHub
 Releases** is the goal for non-technical users - it must be a
@@ -501,7 +501,7 @@ What that implies, roughly in order:
   and it opens itself on first run) carries the walkthrough and writes
   the config, so nobody hand-edits a file. `README.md` repeats it for
   people reading on GitHub.
-- **Installable** - **half done.** `pip install lumen-bulb` works from a
+- **Installable** - **half done.** `pip install lumen-control` works from a
   built wheel and puts `lumen` on PATH; `bulb.cmd` is gone. Still to do:
   the actual PyPI upload, and a single `.exe` for people who do not have
   Python. See the packaging section above.

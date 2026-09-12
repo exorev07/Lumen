@@ -7,7 +7,7 @@ Commands land instantly and keep working with the internet down, because
 nothing leaves your network.
 
 ```
-pip install lumen-bulb
+pip install lumen-control
 lumen
 ```
 

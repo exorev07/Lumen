@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "lumen-bulb"
+name = "lumen-control"
 dynamic = ["version"]
 description = "Terminal app for Tuya / SmartLife smart bulbs - local LAN control, no cloud round-trip."
 readme = "README.md"
