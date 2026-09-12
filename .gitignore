@@ -16,3 +16,9 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# Claude Code - local tooling and notes, not part of the project
+CLAUDE.md
+.claude/
+.claude*
+**/CLAUDE.md

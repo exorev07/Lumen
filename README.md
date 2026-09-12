@@ -128,8 +128,9 @@ pip install -e .
 
 `src/lumen/device.py` is the transport and knows nothing about the UI,
 `tui.py` is the interface, `cli.py` is the command line, and `config.py`
-loads and saves settings. `CLAUDE.md` carries the design decisions and
-the gotchas worth not rediscovering.
+loads and saves settings. The modules carry fairly dense comments about
+the decisions behind them - particularly the threading rules in `tui.py`,
+where every call into the bulb blocks on a socket.
 
 ## Licence
 
