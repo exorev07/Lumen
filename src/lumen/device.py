@@ -8,14 +8,12 @@ DPS codes: 20 = switch, 21 = mode, 22 = brightness, 23 = colour temp,
 24 = HSV colour.
 """
 
-import os
-import re
 import threading
 from dataclasses import dataclass
 
 import tinytuya
 
-import config
+from . import config
 
 COLORS = {
     "red":     (255, 0, 0),
@@ -156,22 +154,20 @@ class BulbState:
         return state
 
 
-def _save_ip(ip, on_message=None):
-    """Persist a newly discovered IP back into local_secrets.py."""
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        "local_secrets.py")
+def _save_ip(settings, ip, on_message=None):
+    """Remember a newly discovered address in the user's config file.
+
+    This used to rewrite `IP = ...` inside local_secrets.py with a regex, which
+    cannot work once the package is installed: the code directory is read-only
+    and rewriting an importable module at runtime is a poor idea regardless.
+
+    Failure is reported but never fatal - a bulb we just reached is more useful
+    than a saved address, and the next run simply scans again.
+    """
     try:
-        with open(path, encoding="utf-8") as fh:
-            src = fh.read()
-        if re.search(r'^IP\s*=', src, flags=re.M):
-            src = re.sub(r'^IP\s*=.*$', 'IP        = "%s"' % ip, src,
-                         count=1, flags=re.M)
-        else:
-            src = src.rstrip("\n") + '\nIP        = "%s"\n' % ip
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write(src)
+        settings.save()
         if on_message:
-            on_message("Bulb is at %s - local_secrets.py updated." % ip)
+            on_message("Bulb is at %s - address saved." % ip)
     except OSError as exc:
         if on_message:
             on_message("Found bulb at %s but could not save it: %s" % (ip, exc))
@@ -184,10 +180,14 @@ class Bulb:
     music-reactive mode) pays the connection cost once rather than per command.
     """
 
-    def __init__(self, on_message=None):
+    def __init__(self, on_message=None, settings=None):
         # on_message reports progress that is not an error - a LAN scan, or a
         # saved address. The CLI sends it to stderr; the TUI shows it in-app.
         self._on_message = on_message
+        # Settings are injected rather than read from a module, so the Settings
+        # screen can hand over new credentials without a restart and a device
+        # list can later hold several Bulbs with different ones.
+        self.settings = settings if settings is not None else config.load()
         self._dev = None
         # Last fully decoded state, used to fill in partial status frames.
         self._last_state = None
@@ -204,7 +204,8 @@ class Bulb:
             self._on_message(text)
 
     def _build(self, ip):
-        dev = tinytuya.BulbDevice(config.DEVICE_ID, ip, config.LOCAL_KEY)
+        dev = tinytuya.BulbDevice(self.settings.device_id, ip,
+                                  self.settings.local_key)
         dev.set_version(config.VERSION)
         dev.set_socketPersistent(True)
         return dev
@@ -224,17 +225,17 @@ class Bulb:
             self._say("Scan failed: %s" % exc)
             return None
         for ip, info in found.items():
-            if info.get("gwId") == config.DEVICE_ID:
+            if info.get("gwId") == self.settings.device_id:
                 return ip
         return None
 
     def open(self):
         """Connect, rediscovering the bulb if its address has changed."""
-        if not config.DEVICE_ID or not config.LOCAL_KEY:
+        if not self.settings.is_configured:
             raise BulbNotConfigured(
-                "Bulb is not configured.\n"
-                "Copy local_secrets.example.py to local_secrets.py and fill in "
-                "DEVICE_ID and LOCAL_KEY.\nSee README.md for how to get them."
+                "No device is configured yet.\n"
+                "Run `lumen` and press `s` to open Settings, which explains "
+                "how to get your device ID and local key."
             )
 
         # Hold the lock across the whole reconnect: `r` can retry while a
@@ -245,8 +246,8 @@ class Bulb:
             return self._open_locked()
 
     def _open_locked(self):
-        if config.IP:
-            dev = self._build(config.IP)
+        if self.settings.ip:
+            dev = self._build(self.settings.ip)
             if self._reachable(dev):
                 self._dev = dev
                 return self
@@ -268,7 +269,11 @@ class Bulb:
                 % ip
             )
 
-        _save_ip(ip, self._on_message)
+        # Carry the new address on the settings we hold before persisting, so
+        # the in-memory copy and the file agree and a later save from the
+        # Settings screen does not write the stale address back.
+        self.settings = config.with_ip(self.settings, ip)
+        _save_ip(self.settings, ip, self._on_message)
         self._dev = dev
         return self
 

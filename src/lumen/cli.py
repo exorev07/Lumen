@@ -1,14 +1,14 @@
-#!/usr/bin/env python3
-"""Control a Tuya / SmartLife smart bulb over the local network.
+"""The `lumen` command.
 
-With no arguments this opens the terminal interface. With a subcommand it
-does one thing and exits, which is what scripts want.
+With no arguments this opens the app, which is the primary way in. With a
+subcommand it does one thing and exits, which is what scripts want.
 """
 
 import argparse
 import sys
 
-from device import COLORS, Bulb, BulbError, parse_color
+from . import __version__, config
+from .device import COLORS, Bulb, BulbError, parse_color
 
 
 def _note(text):
@@ -35,17 +35,21 @@ def show_status(bulb):
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        description="Control a Tuya / SmartLife smart bulb. "
-                    "Run with no command to open the terminal interface.",
+        prog="lumen",
+        description="Control a Tuya / SmartLife smart bulb over the local "
+                    "network. Run with no command to open the app.",
         epilog="Colors: " + ", ".join(COLORS),
     )
+    parser.add_argument("--version", action="version",
+                        version="lumen %s" % __version__)
     sub = parser.add_subparsers(dest="cmd")
 
-    sub.add_parser("ui", help="open the terminal interface (the default)")
+    sub.add_parser("ui", help="open the app (the default)")
     sub.add_parser("on", help="turn the bulb on")
     sub.add_parser("off", help="turn the bulb off")
     sub.add_parser("toggle", help="flip the current power state")
     sub.add_parser("status", help="show the current state")
+    sub.add_parser("config", help="show where settings are stored")
 
     p = sub.add_parser("brightness", help="set brightness 1-100")
     p.add_argument("percent", type=int, choices=range(1, 101), metavar="1-100")
@@ -58,6 +62,21 @@ def build_parser():
     p.add_argument("percent", type=int, choices=range(0, 101), metavar="0-100")
 
     return parser
+
+
+def show_config():
+    """Where the settings live and whether they are filled in.
+
+    Printed without connecting, so it still answers when the bulb is
+    unreachable - which is exactly when someone goes looking for the file.
+    """
+    settings = config.load()
+    print(f"Config file : {config.config_path()}")
+    print(f"Configured  : {'yes' if settings.is_configured else 'no'}")
+    if settings.ip:
+        print(f"Saved IP    : {settings.ip}")
+    if settings.from_env:
+        print(f"From env    : {', '.join(sorted(settings.from_env))}")
 
 
 def run_command(bulb, args):
@@ -88,8 +107,13 @@ def main():
     args = build_parser().parse_args()
 
     if args.cmd in (None, "ui"):
-        import tui
+        from . import tui
         tui.run()
+        return
+
+    # Answered without a connection, so it works when the bulb does not.
+    if args.cmd == "config":
+        show_config()
         return
 
     bulb = connect()

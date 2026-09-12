@@ -1,0 +1,55 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lumen-bulb"
+dynamic = ["version"]
+description = "Terminal app for Tuya / SmartLife smart bulbs - local LAN control, no cloud round-trip."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "exorev07" }]
+keywords = [
+    "tuya", "smartlife", "tuya-local", "tinytuya", "smart-bulb",
+    "smart-home", "home-automation", "local-control", "iot",
+    "cli", "tui", "rgb-lighting",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Home Automation",
+]
+dependencies = [
+    "tinytuya>=1.20.0",
+    "textual>=8.0,<9",
+]
+
+[project.urls]
+Homepage = "https://github.com/exorev07/Lumen"
+Repository = "https://github.com/exorev07/Lumen"
+Issues = "https://github.com/exorev07/Lumen/issues"
+
+[project.scripts]
+lumen = "lumen.cli:main"
+
+[tool.hatch.version]
+path = "src/lumen/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lumen"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/lumen",
+    "README.md",
+    "TROUBLESHOOTING.md",
+    "LICENSE",
+]

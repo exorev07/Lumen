@@ -2,6 +2,11 @@
 local_secrets.py
 CREDENTIALS.md
 
+# The real config lives in the user config dir, not here - but a copy
+# pulled in for debugging must never be committable.
+config.toml
+*.toml.tmp
+
 # Tuya wizard/scan output (contains the local key and API credentials)
 tuya-data/*
 !tuya-data/README.md

@@ -25,8 +25,8 @@ open an issue - that is a bug.
 ## "Found the bulb but it rejected the connection"
 
 The bulb is reachable, so the address is right, but it refused the
-local key. That means **the key has rotated** and the one in
-`local_secrets.py` is stale.
+local key. That means **the key has rotated** and the one you have
+saved is stale.
 
 Re-pairing the bulb in the SmartLife app issues a new local key and
 voids the old one. Two cases worth knowing apart:
@@ -38,15 +38,15 @@ voids the old one. Two cases worth knowing apart:
 - **New SSID, or a genuine re-pair** - the key is rotated and has to be
   fetched again.
 
-To re-fetch it, re-run the wizard (see the README's setup section) and
-copy the new `key` value into `local_secrets.py`.
+To re-fetch it, re-run the wizard (see the README's setup section, or
+press `s` in the app), then paste the new `key` into Settings.
 
 ## The bulb got a new IP
 
-Handled automatically. The tool tries the saved address first; if the
+Handled automatically. Lumen tries the saved address first; if the
 bulb does not answer, it rescans, finds the bulb by its device ID,
-writes the new address into `local_secrets.py` and carries on. You just
-see a one-line notice and about a 12-second pause.
+saves the new address and carries on. You just see a one-line notice
+and about a 12-second pause.
 
 To avoid the pause entirely, set a DHCP reservation for the bulb's MAC
 in your router's admin page so it always lands on the same address.
@@ -76,7 +76,7 @@ If you need to fetch a key and the trial has lapsed:
 ## Checking whether it works
 
 ```
-python bulb.py status
+lumen status
 ```
 
 Expect a power/mode/brightness readout. If it hangs, the address is
@@ -84,6 +84,24 @@ stale. If it fails to decrypt, the key is stale.
 
 ## Keep your own key backed up
 
-`local_secrets.py` is gitignored, so pushing this repo backs up your
-code and **not** your ability to talk to your bulb. The local key is
-the one irreplaceable value - keep a copy in a password manager.
+Your settings live outside the repository (run `lumen config` for the
+path), so pushing this repo backs up your code and **not** your ability
+to talk to your bulb. The local key is the one irreplaceable value -
+keep a copy in a password manager.
+
+## "Could not save" in Settings
+
+Lumen writes your settings to a small file in your user config directory -
+`lumen config` prints the path. A save can fail if that directory is not
+writable: a locked-down profile, a full disk, or on Windows an antivirus
+tool guarding the folder. Windows Defender's Controlled Folder Access does
+this, and it does not always announce itself.
+
+You can also skip the file entirely and set the values in the environment,
+which always wins over it:
+
+```
+LUMEN_DEVICE_ID   your device id
+LUMEN_LOCAL_KEY   your local key
+LUMEN_IP          optional; blank to scan for the bulb
+```

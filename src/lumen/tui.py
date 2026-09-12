@@ -12,15 +12,17 @@ import threading
 from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Vertical
+from textual.containers import Container, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
+from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import Footer, Input, Label, Static
 
-from device import (COLORS, MODE_COLOUR, MODE_WHITE, Bulb, BulbError,
-                    BulbState, parse_color)
+from . import config
+from .device import (COLORS, MODE_COLOUR, MODE_WHITE, Bulb, BulbError,
+                     BulbState, parse_color)
 
 # Trailing debounce on slider writes. Long enough to swallow a held arrow
 # key, short enough that a single tap still feels immediate.
@@ -269,6 +271,204 @@ def _unexpected(exc):
     return "Unexpected %s: %s" % (type(exc).__name__, exc)
 
 
+# Shown in the Settings screen. Kept here rather than in a README because the
+# whole point is that someone who has only ever used the SmartLife app can get
+# from nothing to a working key without leaving the app.
+SETUP_STEPS = """Lumen talks to your bulb directly over WiFi, so it needs two values that
+only your Tuya account can give you: the device ID and its local key.
+
+  1. Pair the bulb in the Smart Life app first, if you have not already.
+     Lumen does not pair devices - it controls ones already on your WiFi.
+
+  2. Sign up at iot.tuya.com (free) and create a Cloud project. Pick the
+     data centre for the region your Smart Life account is in - the wrong
+     one returns no devices.
+
+  3. In that project, subscribe to IoT Core, Authorization and Smart Home
+     Scene Linkage. All three are free.
+
+  4. Open Devices -> Link Tuya App Account and link your Smart Life
+     account by scanning the QR code with the app.
+
+  5. Install tinytuya's wizard and run it:
+
+         pip install tinytuya
+         python -m tinytuya wizard
+
+     Give it the Access ID and Access Secret from your project's overview
+     page, and the data centre you chose.
+
+  6. The wizard writes devices.json. Your bulb's entry holds "id" and
+     "key" - those are the two values below.
+
+The IP is optional: leave it blank and Lumen scans your network for the
+bulb, then remembers where it found it.
+"""
+
+
+class SettingsScreen(ModalScreen):
+    """Credentials, and the instructions for obtaining them.
+
+    A stranger installing this has no key and no idea where to get one, and
+    sending them to a README defeats the point of an app you just run. So the
+    walkthrough lives next to the fields it is describing.
+
+    Saving writes the config file and hands the new settings back to the app,
+    which reconnects without a restart.
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "back"),
+        Binding("ctrl+s", "save", "save"),
+    ]
+
+    CSS = """
+    SettingsScreen {
+        align: center middle;
+        background: $surface 60%;
+    }
+
+    #settings-box {
+        width: 90%;
+        max-width: 100;
+        height: 90%;
+        padding: 1 2;
+        border: round $primary;
+        border-title-color: $primary;
+        border-title-style: bold;
+        border-subtitle-color: $text-muted;
+        background: $surface;
+    }
+
+    /* The steps scroll; the fields below them stay put, so the Save row is
+       always reachable without scrolling to the bottom. */
+    #steps {
+        height: 1fr;
+        min-height: 6;
+        padding: 0 1;
+        color: $text-muted;
+        scrollbar-size-vertical: 1;
+    }
+
+    #fields { height: auto; padding-top: 1; }
+
+    #fields Label { padding-left: 1; color: $text-muted; }
+    #fields Input { margin-bottom: 1; }
+
+    #settings-message { padding-left: 1; height: auto; }
+    #settings-message.error { color: $error; }
+    #settings-message.ok { color: $success; }
+    """
+
+    class Saved(Message):
+        """New settings were written; the app should reconnect."""
+
+        def __init__(self, settings):
+            super().__init__()
+            self.settings = settings
+
+    def __init__(self, settings):
+        super().__init__()
+        self._settings = settings
+
+    def compose(self) -> ComposeResult:
+        box = Vertical(id="settings-box")
+        box.border_title = "SETTINGS"
+        box.border_subtitle = "ctrl+s save · esc back"
+        with box:
+            with VerticalScroll(id="steps"):
+                yield Static(SETUP_STEPS)
+            with Vertical(id="fields"):
+                yield Label("device id")
+                yield Input(
+                    value=self._settings.device_id,
+                    placeholder="e.g. bf1a2b3c4d5e6f7a8b9c0d",
+                    id="f-device-id",
+                )
+                yield Label("local key")
+                yield Input(
+                    value=self._settings.local_key,
+                    placeholder="22 characters from devices.json",
+                    password=True,
+                    id="f-local-key",
+                )
+                yield Label("ip address (optional)")
+                yield Input(
+                    value=self._settings.ip,
+                    placeholder="blank to scan the network",
+                    id="f-ip",
+                )
+            yield Static("", id="settings-message")
+        yield Footer()
+
+    def on_mount(self):
+        # Env vars override the file, so editing a field the environment has
+        # pinned would appear to work and then be silently ignored on load.
+        # Say so instead, and leave the field alone.
+        pinned = [f for f in ("device_id", "local_key", "ip")
+                  if self._settings.locked_by_env(f)]
+        if pinned:
+            self._say(
+                "Set in the environment, so changes here will not apply: "
+                + ", ".join(pinned),
+            )
+        self.query_one("#f-device-id", Input).focus()
+
+    def _say(self, text, error=False, ok=False):
+        widget = self.query_one("#settings-message", Static)
+        widget.update(text)
+        widget.set_class(error, "error")
+        widget.set_class(ok, "ok")
+
+    def _collect(self):
+        return (
+            self.query_one("#f-device-id", Input).value.strip(),
+            self.query_one("#f-local-key", Input).value.strip(),
+            self.query_one("#f-ip", Input).value.strip(),
+        )
+
+    @on(Input.Submitted)
+    def submitted(self):
+        """Enter on the last field saves; on the others it moves on.
+
+        Filling three fields and pressing enter is the obvious gesture, and
+        it should not require finding ctrl+s.
+        """
+        if self.focused is self.query_one("#f-ip", Input):
+            self.action_save()
+        else:
+            self.focus_next()
+
+    def action_cancel(self):
+        self.dismiss(None)
+
+    def action_save(self):
+        device_id, local_key, ip = self._collect()
+        if not device_id or not local_key:
+            self._say("Device id and local key are both required.", error=True)
+            return
+
+        settings = config.Settings(
+            device_id=device_id,
+            local_key=local_key,
+            ip=ip,
+            from_env=self._settings.from_env,
+        )
+        try:
+            path = settings.save()
+        except OSError as exc:
+            # Disk full, a read-only profile, Defender's Controlled Folder
+            # Access. Report it rather than pretending the save worked.
+            self._say("Could not save: %s" % exc, error=True)
+            return
+        except Exception as exc:                      # noqa: BLE001
+            self._say(_unexpected(exc), error=True)
+            return
+
+        self.post_message(self.Saved(settings))
+        self.dismiss(str(path))
+
+
 class LumenApp(App):
     """The whole interface - one screen."""
 
@@ -405,6 +605,7 @@ class LumenApp(App):
         Binding("o", "power_on", "on"),
         Binding("f", "power_off", "off"),
         Binding("r", "refresh_state", "refresh"),
+        Binding("s", "settings", "settings"),
         Binding("q", "quit", "quit"),
         Binding("down", "move(1)", "next", show=False),
         Binding("up", "move(-1)", "prev", show=False),
@@ -453,8 +654,17 @@ class LumenApp(App):
 
     def on_mount(self):
         self.reflow_swatches()
-        self.connect()
         self._poll_timer = self.set_interval(POLL_INTERVAL, self.poll)
+        # A first run has no credentials, and "not connected" is unhelpful
+        # when the real answer is that nothing has been set up yet. Open
+        # Settings straight away instead of failing a connection first.
+        if not self.bulb.settings.is_configured:
+            self._on_disconnected(
+                "No device configured yet - fill in Settings to begin."
+            )
+            self.action_settings()
+        else:
+            self.connect()
 
     def on_resize(self, event):
         # Take the width from the event: self.size still holds the old one
@@ -664,6 +874,23 @@ class LumenApp(App):
         focused = self.focused
         if focused is not None and not focused.display:
             self.query_one("#brightness", Bar).focus()
+
+    def action_settings(self):
+        """Open Settings, prefilled with whatever is configured now."""
+        self.push_screen(SettingsScreen(self.bulb.settings))
+
+    @on(SettingsScreen.Saved)
+    def settings_saved(self, event):
+        """Adopt new credentials and reconnect, without a restart.
+
+        The Bulb keeps its settings, so handing it the new ones and calling
+        connect() is the whole operation - connect() closes the old socket
+        first, so a key change cannot leave the previous device open.
+        """
+        self.bulb.settings = event.settings
+        self._intent.clear()
+        self.note("Settings saved - reconnecting...")
+        self.connect()
 
     def action_refresh_state(self):
         """Sync with the bulb. While disconnected this retries the connection

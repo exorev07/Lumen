@@ -17,36 +17,63 @@ codes apply: 20 = switch, 21 = mode, 22 = brightness, 23 = colour temp,
 ## Setup state
 
 Fully working. The Tuya cloud project exists, the SmartLife account is
-linked, and the local key is in `local_secrets.py`.
+linked, and the key is configured.
 
 **Do not re-run the Tuya wizard unless the key has actually rotated.**
+
+Settings now live in a **per-user TOML file**, not in `local_secrets.py`:
+
+```
+Windows   %APPDATA%\lumen\config.toml
+macOS     ~/Library/Application Support/lumen/config.toml
+Linux     $XDG_CONFIG_HOME/lumen/config.toml, else ~/.config/lumen/
+```
+
+`lumen config` prints the path. `local_secrets.py` is still *read* as a
+migration path so this machine kept working across the restructure, but
+nothing writes it any more - see the settings notes below.
 
 ## Layout
 
 ```
-device.py                  transport - connect, DPS reads and writes
-tui.py                     the terminal interface (Textual)
-bulb.py                    the CLI - argument parsing, dispatch
-config.py                  settings loader; env vars, then local_secrets.py
-local_secrets.py           DEVICE_ID, LOCAL_KEY, IP        [gitignored]
-local_secrets.example.py   template
-bulb.cmd                   wrapper for  .\bulb <command>
+pyproject.toml             packaging; deps and the `lumen` entry point
+src/lumen/__init__.py      __version__ - the one place it is defined
+src/lumen/device.py        transport - connect, DPS reads and writes
+src/lumen/tui.py           the terminal interface (Textual)
+src/lumen/cli.py           the CLI - argument parsing, dispatch
+src/lumen/config.py        Settings: load, save, env precedence
+README.md                  public front page; also the PyPI description
+requirements.txt           just `-e .` now; deps live in pyproject
 tuya-data/                 wizard/scan JSON output         [gitignored]
 TROUBLESHOOTING.md         failure modes and recovery - public
 CREDENTIALS.md             this machine's key + IDs         [gitignored]
+local_secrets.py           pre-0.1 secrets, read only for migration
+                                                           [gitignored]
 ```
+
+Installed as **`lumen-bulb`** on PyPI (plain `lumen` is taken) but the
+command it installs is `lumen`. The `src/` layout is deliberate: it makes
+it impossible to import the package from the source tree by accident, so
+a broken wheel cannot pass tests locally.
+
+`bulb.cmd` and `local_secrets.example.py` are **gone.** Do not add a
+launcher script back - `lumen` is the entry point, and the goal is an app
+that behaves like any other installed terminal program.
 
 ## Usage
 
 ```
-.\bulb                        opens the terminal interface
-.\bulb status | on | off | toggle
-.\bulb brightness 60          1-100
-.\bulb color red              name or "#RRGGBB"
-.\bulb warm 80                0 = cool, 100 = warm
+lumen                         opens the app
+lumen status | on | off | toggle
+lumen brightness 60           1-100
+lumen color red               name or "#RRGGBB"
+lumen warm 80                 0 = cool, 100 = warm
+lumen config                  where settings are stored
+lumen --version
 ```
 
-`python bulb.py <command>` works identically.
+From a checkout without installing:
+`PYTHONPATH=src python -m lumen.cli <command>`.
 
 In the interface: `↑/↓` (or `tab`) move between controls. On the mode row,
 `←/→` switch between white and colour. On a bar, `←/→` adjust it -
@@ -66,11 +93,12 @@ dropped), `q` quits.
 - **Writing to `~\Documents` is blocked** by Windows Defender's
   Controlled Folder Access, even as Administrator. A PowerShell `$PROFILE`
   shortcut cannot be installed without allowing `pwsh.exe` through it.
-  This is why `bulb.cmd` sits in the project folder instead. The ReadOnly
+  This was why `bulb.cmd` sat in the project folder; the package's `lumen`
+  entry point retires that problem entirely. The ReadOnly
   attribute on Documents is a red herring - Defender is the real blocker.
 - **There was a `bulb.ps1` as well as `bulb.cmd`;** having both made
-  `.\bulb` ambiguous in PowerShell. Only `bulb.cmd` remains - do not add
-  a `.ps1` back.
+  `.\bulb` ambiguous in PowerShell. Both are gone now - `lumen` is the
+  entry point. Do not add a launcher script of either kind back.
 - **Brightness is 10-1000 internally,** so a set of 40% can read back as
   39%. That rounding is expected, not a bug.
 - **The bulb keeps two separate brightnesses, one per mode.** In *white*
@@ -106,7 +134,7 @@ dropped), `q` quits.
   reported bug. `raw_to_warmth` / `warmth_to_raw_pct` in `device.py` do the
   flip, and everything above the transport talks in warmth where **100 is
   warm**. Consequences: `.\bulb warm 80` now means warm, not cool, which is a
-  deliberate reversal of what it used to do; `bulb.py` prints `Warmth:` rather
+  deliberate reversal of what it used to do; `cli.py` prints `Warmth:` rather
   than `Colour temp:`. **`set_mode` has to re-encode** with `warmth_to_raw_pct`
   when it carries `state.warmth` back to `set_white_percentage` - passing the
   decoded value straight through would flip the temperature on every
@@ -151,6 +179,66 @@ pause and fixes itself. A blank `IP` is fine - it will be discovered.
 It distinguishes two failures deliberately:
 - *not found on scan* -> bulb is off or on another network
 - *found but rejected* -> the local key has rotated, see `TROUBLESHOOTING.md`
+
+## Settings and packaging
+
+The app is a **package**, installed as `lumen-bulb`, providing the `lumen`
+command. `pip install -e .` for development. Verified end to end: a wheel
+builds, installs into a clean venv, and `lumen` works off PATH with no
+`PYTHONPATH` and no project directory.
+
+**Credentials cannot live next to the code.** `local_secrets.py` worked
+only because the project folder was the working directory. Installed from
+a wheel, that directory is read-only and may be shared between users, so
+`config.py` became a `Settings` dataclass with `load()` / `save()` against
+a TOML file in the per-user config dir. Consequences:
+
+- **`_save_ip` no longer rewrites Python source.** It used to regex `IP =`
+  inside `local_secrets.py`; now it calls `settings.save()`. Writing an
+  importable module at runtime was always unpleasant and is impossible
+  once installed.
+- **Settings are injected, not imported.** `Bulb(settings=...)`, defaulting
+  to `config.load()`. This is what lets the Settings screen hand over new
+  credentials and reconnect without a restart - and it is the shape the
+  planned device *list* needs, since two `Bulb`s can hold different
+  settings. There is no module-level `DEVICE_ID` any more.
+- **Saves are atomic** - written to `.toml.tmp` and `os.replace`d, so an
+  interrupted save cannot leave half a key on disk. `chmod 600` on POSIX,
+  best effort.
+- **There is no stdlib TOML writer,** only a reader (`tomllib`). The three
+  values are hand-quoted rather than taking a dependency; `_quote` escapes
+  backslash and quote, verified round-tripping both.
+- **A malformed config is not fatal.** It is treated as absent, so the app
+  opens on Settings instead of tracebacking on a hand-edited typo.
+- **Env vars are `LUMEN_*`,** with `SYSKA_*` kept as aliases - nothing here
+  is Syska-specific. They win over the file, so the Settings screen says
+  which fields the environment has pinned rather than letting an edit
+  appear to work and then be ignored.
+
+**The Settings screen (`s`) carries the setup instructions.** `SETUP_STEPS`
+in `tui.py` walks from the Smart Life app to a local key. It lives next to
+the fields on purpose: sending a stranger to a README defeats the point of
+an app you just run. It is a `ModalScreen`; the steps scroll in a
+`VerticalScroll` while the fields stay put, so Save is always reachable.
+`enter` on the last field saves, `ctrl+s` anywhere, `escape` backs out.
+
+- **It opens itself on first run** when nothing is configured. "Not
+  connected" is the wrong message when the real answer is that setup has
+  not happened.
+- **Saving posts `SettingsScreen.Saved`;** the app swaps `bulb.settings`,
+  clears `_intent` and calls `connect()`, which closes the old socket
+  first. No restart, and a key change cannot leave the previous device
+  open.
+- The key field is `password=True`, so it is masked on screen.
+- A failed save reports the error rather than dismissing - Controlled
+  Folder Access is a real possibility on this machine.
+
+Not done yet: **publishing.** `lumen-bulb` is confirmed free on PyPI but
+nothing is uploaded; a first upload is irreversible, so it wants a
+deliberate `twine upload`. After that, a **PyInstaller `.exe` on GitHub
+Releases** is the goal for non-technical users - it must be a
+*console-subsystem* build, since Textual needs a real terminal and a
+double-clicked windowed binary has none.
 
 ## The TUI
 
@@ -409,13 +497,14 @@ hard part (local control without the cloud) works.
 
 What that implies, roughly in order:
 
-- **Onboarding a stranger.** Right now `local_secrets.py` is filled in by
-  hand and the key comes from running the Tuya wizard separately. A user
-  who has only ever used the SmartLife app needs to be walked from
-  nothing to a working key. The `README.md` walkthrough is step one;
-  doing it *inside* the app - a first-run setup screen - is the real fix.
-- **Installable.** `pip install` (or a single binary), not `git clone`
-  plus a `.cmd` shim sitting in the project folder.
+- ~~**Onboarding a stranger.**~~ - **done.** The Settings screen (`s`,
+  and it opens itself on first run) carries the walkthrough and writes
+  the config, so nobody hand-edits a file. `README.md` repeats it for
+  people reading on GitHub.
+- **Installable** - **half done.** `pip install lumen-bulb` works from a
+  built wheel and puts `lumen` on PATH; `bulb.cmd` is gone. Still to do:
+  the actual PyPI upload, and a single `.exe` for people who do not have
+  Python. See the packaging section above.
 - **Multiple devices,** later. `Bulb` is deliberately one device with one
   socket, and `config` holds a single `DEVICE_ID`/`LOCAL_KEY`/`IP`. Going
   multi-device means a device *list* and a picker in the UI, with each
@@ -432,7 +521,7 @@ not baked into the transport.
 
 The **terminal interface** is built - `tui.py`, on Textual. The split it
 needed is done: `device.py` holds the transport (`Bulb`, DPS reads and
-writes) and knows nothing about argument parsing, `bulb.py` is the CLI on
+writes) and knows nothing about argument parsing, `cli.py` is the CLI on
 top, and both drive the same `Bulb` class.
 
 Still planned:
@@ -483,33 +572,18 @@ unpublished.
 
 Still to do:
 
-- **Write a `README.md`.** There is no README at all right now - the
-  old one was deleted deliberately, because it read as a personal log
-  ("Status: working", "One-time setup (already done)") that assumed an
-  already-configured machine. A stranger arrives with no key, no device
-  ID and no cloud project.
+- ~~**Write a `README.md`**~~ - **done.** Written for a stranger: install,
+  keys, usage, the wizard walkthrough, where settings live, supported
+  devices. It is also the PyPI description, so `pyproject.toml` reads it -
+  **deleting it breaks the build.**
 
-  The deleted file is not lost: it is in git history, and most of it was
-  reusable. Recover it with
+  It deliberately does *not* repeat the old personal-log framing ("Status:
+  working", "already done"). The pre-deletion version is still in history
+  at `git show 7ccdb55:README.md` if something turns out to be missing.
 
-  ```
-  git show 7ccdb55:README.md
-  ```
-
-  and keep the parts that were already fine - the device blurb, the
-  layout table, install, the full usage list with named colours, and
-  especially the **step-by-step Tuya wizard walkthrough** (create the
-  cloud project in the matching data centre, subscribe to IoT Core /
-  Authorization / Scene Linkage, link the SmartLife account by QR, run
-  `python -m tinytuya wizard`, copy the key out of `devices.json`). That
-  walkthrough is the hard-won part and should not be rewritten from
-  scratch.
-
-  What to drop or rephrase: the "Status: working" section and the
-  "(already done)" framing, which only make sense on this machine.
 - ~~Dead `CREDENTIALS.md` links~~ - **done.** The generic recovery
   procedure now lives in `TROUBLESHOOTING.md`, which is committed, and
-  the `bulb.py` error messages point there instead. `CREDENTIALS.md`
+  the `cli.py` error messages point there instead. `CREDENTIALS.md`
   keeps only this machine's actual identifiers and stays gitignored.
   Keep it that way: procedure is public, values are not.
 - Re-check `.gitignore` against the tree one more time, and read the
