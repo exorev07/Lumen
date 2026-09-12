@@ -71,6 +71,11 @@ SWATCH_WIDTH = 12
 # Swatch columns. Ten colours, so 5 gives the tidy two rows; a wide terminal
 # is allowed to go to 10 and put them on one line rather than leaving the
 # space unused. A narrower one wraps onto more rows.
+# Below this many rows the panel drops its inter-control gaps - see
+# reflow_spacing(). 16 is the point at which the full white-mode layout
+# (power, mode, both bars, message, borders) still fits with the gaps in.
+COMPACT_ROWS = 16
+
 SWATCH_COLUMNS_MIN = 1
 SWATCH_COLUMNS_PREFERRED = 5
 SWATCH_COLUMNS_MAX = 10
@@ -219,7 +224,10 @@ class ModeTabs(Widget, can_focus=True):
     ModeTabs {
         height: 1;
         width: 1fr;
-        margin: 0 0 1 0;
+        /* Two blank lines below, not one: the mode row is a different kind of
+           control from the bars under it, and a single gap read as though it
+           were part of the same group. */
+        margin: 0 0 2 0;
     }
     ModeTabs:focus { text-style: bold; }
     """
@@ -632,7 +640,16 @@ class LumenApp(App):
     #power.on { color: $success; }
     #power.off { color: $text-muted; }
 
-    Bar { margin: 0 0 0 0; }
+    /* A blank line between the bars. They are separate controls and the
+       arrow keys act on one at a time, so stacking them flush made the pair
+       look like a single two-row widget. The margin is on the bottom, and
+       #warmth is the last bar, so hiding warmth in colour mode does not
+       leave a stray gap. */
+    Bar { margin: 0 0 1 0; }
+
+    /* A short terminal cannot afford the gaps - see reflow_spacing(). */
+    #panel.compact ModeTabs { margin: 0 0 1 0; }
+    #panel.compact Bar { margin: 0; }
 
     .section {
         height: 1;
@@ -779,11 +796,6 @@ class LumenApp(App):
 
             yield Input(placeholder="#rrggbb", id="hex")
 
-            # Takes up the slack, so the message line sits on the panel's
-            # bottom edge rather than floating under the controls with the
-            # rest of the panel empty beneath it - and fills that space with
-            # the bulb's current colour instead of nothing. Height 1fr, so a
-            # short terminal gives it nothing and the controls still fit.
             # Takes up the slack so the message line sits on the panel's
             # bottom edge instead of floating under the controls with the
             # rest of the panel empty beneath it. Height 1fr, so it is
@@ -797,6 +809,7 @@ class LumenApp(App):
 
     def on_mount(self):
         self.reflow_swatches()
+        self.reflow_spacing()
         self._poll_timer = self.set_interval(POLL_INTERVAL, self.poll)
         # A first run has no credentials, and "not connected" is unhelpful
         # when the real answer is that nothing has been set up yet. Open
@@ -810,9 +823,29 @@ class LumenApp(App):
             self.connect()
 
     def on_resize(self, event):
-        # Take the width from the event: self.size still holds the old one
+        # Take the size from the event: self.size still holds the old one
         # at this point, so reflowing from it lags a resize behind.
         self.reflow_swatches(event.size.width)
+        self.reflow_spacing(event.size.height)
+
+    def reflow_spacing(self, height=None):
+        """Drop the breathing room when the terminal is too short for it.
+
+        The gaps below the mode row and between the bars are worth two and one
+        rows of height respectively, which a tall terminal has to spare. A very
+        short one does not: those three rows are enough to push brightness -
+        the control people actually reach for - off the bottom edge. Losing the
+        primary control is a worse outcome than a cramped panel, so below
+        COMPACT_ROWS the margins collapse and the layout goes back to what it
+        was before the gaps were added.
+        """
+        if height is None:
+            height = self.size.height
+        try:
+            panel = self.query_one("#panel")
+        except NoMatches:
+            return
+        panel.set_class(height < COMPACT_ROWS, "compact")
 
     def reflow_swatches(self, width=None):
         """Fit as many swatches per row as the width allows.
