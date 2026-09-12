@@ -8,6 +8,7 @@ DPS codes: 20 = switch, 21 = mode, 22 = brightness, 23 = colour temp,
 24 = HSV colour.
 """
 
+import colorsys
 import threading
 from dataclasses import dataclass
 
@@ -109,6 +110,28 @@ def hsv_value_pct(hsv):
         return raw_to_pct(int(hsv[8:12], 16))
     except ValueError:
         return None
+
+
+def pct_to_hsv_value(percent):
+    """Brightness percent to the 0-1 `v` that tinytuya's set_hsv wants.
+
+    This exists because the two directions did not agree. tinytuya encodes V
+    as `int(v * 1000)` - a plain fraction of 1000, with no offset and
+    truncation rather than rounding - but `raw_to_pct` decodes DPS 24's value
+    on the 10-1000 scale the rest of the bulb uses. Passing `percent / 100`
+    straight through therefore wrote a raw value up to 10 units low, and the
+    read-back came in 1% under what was asked for.
+
+    That only showed below ~55%, where the offset survived rounding, which is
+    what made colour-mode brightness look like it moved in random steps
+    rather than consistently off by one. Worse, 1% is inside the TUI's
+    INTENT_TOLERANCE, so the bar accepted the wrong value instead of holding
+    the user's.
+
+    Going through pct_to_raw makes the write use the same scale as the read,
+    so the round trip is exact at every percentage.
+    """
+    return pct_to_raw(percent) / 1000.0
 
 
 @dataclass
@@ -358,7 +381,8 @@ class Bulb:
                 hsv = state.hsv or "000003e803e8"
                 hue = int(hsv[0:4], 16)
                 sat = int(hsv[4:8], 16)
-                self._device.set_hsv(hue / 360.0, sat / 1000.0, percent / 100.0)
+                self._device.set_hsv(hue / 360.0, sat / 1000.0,
+                                     pct_to_hsv_value(percent))
             else:
                 self._device.set_brightness(pct_to_raw(percent))
 
@@ -373,14 +397,13 @@ class Bulb:
             if brightness is None:
                 self._device.set_colour(r, g, b)
                 return
-            import colorsys
             # rgb_to_hsv returns (h, s, v) in that order. Unpacking it as
             # (h, v, s) swapped saturation and value, which is invisible on
             # a fully saturated swatch (both 1.0) but washes out any muted
             # hex colour.
             hue, sat, _value = colorsys.rgb_to_hsv(r / 255.0, g / 255.0,
                                                    b / 255.0)
-            self._device.set_hsv(hue, sat, brightness / 100.0)
+            self._device.set_hsv(hue, sat, pct_to_hsv_value(brightness))
 
     def set_mode(self, mode, state=None):
         """Switch between white and colour, preserving brightness.
@@ -398,7 +421,8 @@ class Bulb:
                 hsv = state.hsv or "000003e803e8"
                 hue = int(hsv[0:4], 16)
                 sat = int(hsv[4:8], 16) or 1000
-                self._device.set_hsv(hue / 360.0, sat / 1000.0, bright / 100.0)
+                self._device.set_hsv(hue / 360.0, sat / 1000.0,
+                                     pct_to_hsv_value(bright))
             else:
                 self._device.set_white_percentage(
                     bright, warmth_to_raw_pct(state.warmth))
