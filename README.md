@@ -40,6 +40,9 @@ Run `lumen` with no arguments and you get the interface:
 | `s` | settings |
 | `q` | quit |
 
+The mouse works too: click a colour to set it, click a mode to switch,
+click anywhere on a bar to jump to that level, or drag to scrub.
+
 Controls that mean nothing in the current mode are hidden — warmth in
 colour mode, the swatches in white mode.
 

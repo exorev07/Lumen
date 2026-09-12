@@ -157,6 +157,47 @@ class Bar(Widget, can_focus=True):
         """Update from a poll without echoing a write back to the bulb."""
         self.value = max(self.minimum, min(100, int(value)))
 
+    def _value_at(self, x):
+        """The percentage the track cell under x represents, or None.
+
+        None for a click on the label or past the end of the track - those
+        are not part of the slider and should only move focus.
+        """
+        track = self.track_width()
+        start = BAR_LABEL_CELLS
+        offset = x - start
+        if offset < 0 or offset >= track:
+            return None
+        # Centre of the cell, so clicking the first cell does not always
+        # read as 0 and the last as under 100.
+        return round((offset + 0.5) / track * 100)
+
+    def on_mouse_down(self, event):
+        """Clicking the track jumps to that level; dragging scrubs.
+
+        These render as sliders, so a click that only moved focus read as
+        the widget being broken - the same complaint as the swatches needing
+        enter. Capturing the mouse means a drag keeps updating even when the
+        pointer strays outside the row.
+        """
+        self.focus()
+        value = self._value_at(event.x)
+        if value is None:
+            return
+        self.capture_mouse()
+        self.action_set_value(value)
+
+    def on_mouse_move(self, event):
+        # Only while dragging - capture_mouse is what makes this ours.
+        if self.app.mouse_captured is self:
+            value = self._value_at(event.x)
+            if value is not None:
+                self.action_set_value(value)
+
+    def on_mouse_up(self, event):
+        if self.app.mouse_captured is self:
+            self.release_mouse()
+
     def on_resize(self, event):
         # The track is clamped to BAR_WIDTH, so most resize steps do not
         # change it at all. Repainting anyway is what makes a drag-resize
@@ -218,6 +259,50 @@ class ModeTabs(Widget, can_focus=True):
             return f"{caret}{tabs}"
         return f"{caret}{'mode':<12}" + tabs
 
+    def _tab_spans(self):
+        """(mode, first_cell, last_cell) for each tab, as rendered.
+
+        Derived from the same rule render() uses rather than hardcoded, so
+        the clickable region cannot drift away from what is on screen if the
+        label widths or the narrow-terminal threshold change.
+        """
+        # Caret, then the "mode" label when there is room for it.
+        cursor = 1 + (0 if self._labels_hidden() else 12)
+        spans = []
+        for name in self.MODES:
+            # Each cell renders as " label " - one space either side.
+            width = len(self.LABELS[name]) + 2
+            spans.append((name, cursor, cursor + width - 1))
+            cursor += width + 1     # + the space between tabs
+        return spans
+
+    def _labels_hidden(self):
+        return bool(self.size.width) and self.size.width < 28
+
+    def on_click(self, event):
+        """Clicking a tab switches to it.
+
+        Textual's default click only focuses, so the mode row could not be
+        operated with the mouse at all - a click landed on it and nothing
+        happened. A click outside either tab (the label, or the space past
+        them) only focuses, which is the same as clicking a bar.
+        """
+        self.focus()
+        for name, first, last in self._tab_spans():
+            # Past the widget's right edge the tab is clipped and not
+            # actually on screen, so a click there cannot have been aimed at
+            # it. Only the visible part is clickable.
+            if first >= self.size.width:
+                break
+            if first <= event.x <= last:
+                if name != self.mode:
+                    self.mode = name
+                # Post even when it is already the current mode: clicking the
+                # active tab is a reasonable way to re-assert it, and the
+                # bulb may have drifted from what the tab shows.
+                self.post_message(self.Changed(name))
+                return
+
     def on_resize(self, event):
         # Only the crossing of the 28-cell threshold changes the output.
         was = (self.size.width or 0) < 28
@@ -276,6 +361,18 @@ class Swatch(Static, can_focus=True):
 
     def action_pick(self):
         self.post_message(self.Picked(self.rgb, self.color_name))
+
+    def on_click(self):
+        """Clicking a colour sets it.
+
+        Textual's default click only moves focus, so without this a click
+        selected the swatch and then waited for enter - fine when arrowing
+        around, but a click that visibly does nothing reads as broken.
+        Focus follows too, so the keyboard carries on from where the mouse
+        left off.
+        """
+        self.focus()
+        self.action_pick()
 
     def action_step(self, delta):
         """Move along the swatches. They are one wrapping grid, so left at the
