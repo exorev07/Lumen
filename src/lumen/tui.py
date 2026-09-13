@@ -599,6 +599,12 @@ class SettingsScreen(ModalScreen):
        alone deliberately: the fields inherit the box's. */
     #fields Input {
         margin-bottom: 1;
+        /* Clear of the scrollbar. The box's own `padding: 1 2` insets the
+           left edge but padding is inside the scrollbar, not outside it,
+           so the right edge ran flush against it. Matching the 2 keeps the
+           field centred in the box rather than trading one lopsided edge
+           for the other. */
+        margin-right: 2;
         border: round $panel-lighten-2;
     }
     #fields Input:focus { border: round $primary; }
