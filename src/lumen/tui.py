@@ -499,36 +499,51 @@ def _unexpected(exc):
 # Shown in the Settings screen. Kept here rather than in a README because the
 # whole point is that someone who has only ever used the SmartLife app can get
 # from nothing to a working key without leaving the app.
-SETUP_STEPS = """Lumen talks to your bulb directly over WiFi, so it needs two values that
-only your Tuya account can give you: the device ID and its local key.
+#
+# Stored as logical paragraphs, NOT pre-wrapped text. It used to be one
+# triple-quoted string hard-wrapped at ~74 columns with the continuation
+# lines hand-indented, which broke at both ends: a wide box left a ragged
+# column of dead space on the right, and a narrow one re-broke lines that
+# were already broken, so the hanging indents landed mid-sentence. Textual
+# wraps a Static to its own width, so the only way to be width-dynamic is
+# to hand it whole paragraphs and let it do the wrapping.
+SETUP_INTRO = (
+    "Lumen talks to your bulb directly over WiFi, so it needs two values "
+    "that only your Tuya account can give you: the device ID and its "
+    "local key."
+)
 
-  1. Pair the bulb in the Smart Life app first, if you have not already.
-     Lumen does not pair devices - it controls ones already on your WiFi.
+# (number, text) - the number is rendered in its own column so the wrapped
+# continuation lines align under the text rather than under the digit.
+SETUP_STEPS = [
+    (1, "Pair the bulb in the Smart Life app first, if you have not "
+        "already. Lumen does not pair devices - it controls ones already "
+        "on your WiFi."),
+    (2, "Sign up at iot.tuya.com (free) and create a Cloud project. Pick "
+        "the data centre for the region your Smart Life account is in - "
+        "the wrong one returns no devices."),
+    (3, "In that project, subscribe to IoT Core, Authorization and Smart "
+        "Home Scene Linkage. All three are free."),
+    (4, "Open Devices -> Link Tuya App Account and link your Smart Life "
+        "account by scanning the QR code with the app."),
+    (5, "Install tinytuya's wizard and run it:"),
+    # The command block is deliberately not a step of its own - it belongs
+    # to 5, and is mounted between 5 and 6 by compose.
+    (6, "Give it the Access ID and Access Secret from your project's "
+        "overview page, and the data centre you chose."),
+    (7, "The wizard writes devices.json. Your bulb's entry holds \"id\" "
+        "and \"key\" - those are the two values below."),
+]
 
-  2. Sign up at iot.tuya.com (free) and create a Cloud project. Pick the
-     data centre for the region your Smart Life account is in - the wrong
-     one returns no devices.
+# Must NOT wrap: a shell command broken across lines is wrong to copy.
+# Rendered in its own Static with `text-wrap: nowrap`; a box too narrow to
+# hold it sheds the block's indent instead - see reflow_steps.
+SETUP_COMMANDS = "pip install tinytuya" + chr(10) + "python -m tinytuya wizard"
 
-  3. In that project, subscribe to IoT Core, Authorization and Smart Home
-     Scene Linkage. All three are free.
-
-  4. Open Devices -> Link Tuya App Account and link your Smart Life
-     account by scanning the QR code with the app.
-
-  5. Install tinytuya's wizard and run it:
-
-         pip install tinytuya
-         python -m tinytuya wizard
-
-     Give it the Access ID and Access Secret from your project's overview
-     page, and the data centre you chose.
-
-  6. The wizard writes devices.json. Your bulb's entry holds "id" and
-     "key" - those are the two values below.
-
-The IP is optional: leave it blank and Lumen scans your network for the
-bulb, then remembers where it found it.
-"""
+SETUP_OUTRO = (
+    "The IP is optional: leave it blank and Lumen scans your network for "
+    "the bulb, then remembers where it found it."
+)
 
 
 class SettingsScreen(ModalScreen):
@@ -578,9 +593,56 @@ class SettingsScreen(ModalScreen):
        always reachable by scrolling to it. */
     #steps {
         height: auto;
-        padding: 0 1;
+        /* Right padding matches the fields' margin-right, so the text
+           clears the scrollbar by the same 2 columns the input boxes do
+           rather than running under it. */
+        padding: 0 2 0 1;
         color: $text-muted;
     }
+
+    /* The intro and the closing note: plain wrapped paragraphs. */
+    .step-para { height: auto; margin-bottom: 1; }
+
+    /* One numbered step. `height: auto` on the row and on both children,
+       or the Horizontal collapses to a single line and the wrapped body
+       is clipped. */
+    .step {
+        height: auto;
+        margin-bottom: 1;
+    }
+    /* Fixed column, so every step's text starts at the same place and the
+       body's wrapped lines hang under the text rather than the digit. */
+    .step-num {
+        width: 4;
+        height: auto;
+        text-align: right;
+        padding-right: 1;
+    }
+    /* 1fr: take whatever is left, at any width. This is the whole point -
+       the wrap follows the box instead of a number baked into the text. */
+    .step-body {
+        width: 1fr;
+        height: auto;
+    }
+    /* A shell command must stay literal - wrapped, it is wrong to copy -
+       so it does not wrap. But `nowrap` alone CLIPS: at the 44-column
+       floor this rendered `python -m tinytuya wi`, a command that looks
+       complete and is not, which is worse than the mangling it replaced.
+       `overflow-x: auto` does not help either - a Static reports its
+       virtual_size as its region, so there is nothing to scroll. The
+       indent is shed instead; see `.flush` below and reflow_steps. */
+    .step-cmd {
+        height: auto;
+        margin: 0 0 1 4;
+        text-wrap: nowrap;
+        color: $text;
+    }
+    /* The indent is the disposable half: at the 44-column floor the widget
+       gets 21 columns and the longest command needs 25, so the 4-column
+       indent is exactly what pushed it over. Shed it and the command fits
+       intact. Same rule as the footer and the status row - drop the
+       decoration, keep the thing the user has to read. */
+    .step-cmd.flush { margin-left: 0; }
 
     #fields { height: auto; padding-top: 1; }
 
@@ -658,7 +720,21 @@ class SettingsScreen(ModalScreen):
         # the Footer. Three copies of one hint, only one of them inert.
         with box:
             with Vertical(id="steps"):
-                yield Static(SETUP_STEPS)
+                yield Static(SETUP_INTRO, classes="step-para")
+                # Each step is its own Static so Textual wraps it to the
+                # live width. The number sits in a fixed-width column of
+                # its own, which is what gives the continuation lines a
+                # hanging indent that survives any width - the old
+                # hand-indented text only lined up at ~74 columns.
+                for number, body in SETUP_STEPS:
+                    with Horizontal(classes="step"):
+                        yield Static("%d." % number, classes="step-num")
+                        yield Static(body, classes="step-body")
+                    if number == 5:
+                        # Belongs to step 5, and must not wrap - see
+                        # SETUP_COMMANDS.
+                        yield Static(SETUP_COMMANDS, classes="step-cmd")
+                yield Static(SETUP_OUTRO, classes="step-para")
             with Vertical(id="fields"):
                 yield Label("DEVICE ID")
                 yield Input(
@@ -692,7 +768,41 @@ class SettingsScreen(ModalScreen):
         # bindings are short enough that it never had a fit problem.
         yield Footer(compact=True)
 
+    # Longest line in SETUP_COMMANDS. Derived, not typed, so editing the
+    # commands cannot leave the threshold behind.
+    COMMAND_CELLS = max(len(line) for line in SETUP_COMMANDS.split(chr(10)))
+
+    def reflow_steps(self):
+        """Shed the command block's indent when it would cost the command.
+
+        `text-wrap: nowrap` keeps a shell command literal, but a Static
+        reports its content as already fitted, so `overflow-x` finds
+        nothing to scroll and the text is simply CLIPPED - at 44 columns
+        this rendered `python -m tinytuya wi`, which looks like a whole
+        command and is not. Dropping the indent buys back the 4 columns.
+        """
+        try:
+            cmd = self.query_one(".step-cmd")
+            steps = self.query_one("#steps")
+        except NoMatches:
+            return
+        # Measure the container rather than deriving the chrome from the
+        # screen width: the box is a percentage of the screen and carries a
+        # border, padding and a scrollbar, and hand-counting those is the
+        # kind of number that drifts the moment one of them changes.
+        room = steps.content_region.width
+        if room <= 0:
+            return
+        cmd.set_class(room < self.COMMAND_CELLS + 4, "flush")
+
+    def on_resize(self, event):
+        # No event.size here, unlike the other reflows: those compute from
+        # the screen width, this reads the container's own resolved width,
+        # which is correct by the time the handler runs.
+        self.reflow_steps()
+
     def on_mount(self):
+        self.reflow_steps()
         # Env vars override the file, so editing a field the environment has
         # pinned would appear to work and then be silently ignored on load.
         # Say so instead, and leave the field alone.
