@@ -71,6 +71,18 @@ SWATCH_WIDTH = 12
 # Swatch columns. Ten colours, so 5 gives the tidy two rows; a wide terminal
 # is allowed to go to 10 and put them on one line rather than leaving the
 # space unused. A narrower one wraps onto more rows.
+# Below this many columns the row labels ("STATUS", "MODE") are dropped and
+# the value takes the whole width. One constant, because the status row and
+# the mode row must cross the threshold together or they stop lining up.
+# Measured against the WIDGET's width, not the screen's - see PANEL_CHROME.
+NARROW_COLUMNS = 28
+
+# The panel's border and padding, which every child is inset by. A widget is
+# this much narrower than the terminal, so a threshold compared against the
+# screen width trips at the wrong size - the trap that made ModeTabs drop its
+# label at 34 screen columns rather than 28.
+PANEL_CHROME = 6
+
 # Below this many rows the panel drops the gap under the mode row - see
 # reflow_spacing(). Measured, not guessed: with the gap in, the full
 # white-mode layout (power, mode, both bars, message, borders) keeps both
@@ -265,9 +277,9 @@ class ModeTabs(Widget, can_focus=True):
         # "mode" + two padded labels needs ~28 cells. Below that, drop the
         # label rather than let the tabs run off the right edge - the same
         # thing Bar does with its track.
-        if self.size.width and self.size.width < 28:
+        if self.size.width and self.size.width < NARROW_COLUMNS:
             return f"{caret}{tabs}"
-        return f"{caret}{'mode':<12}" + tabs
+        return f"{caret}{'MODE':<12}" + tabs
 
     def _tab_spans(self):
         """(mode, first_cell, last_cell) for each tab, as rendered.
@@ -287,7 +299,7 @@ class ModeTabs(Widget, can_focus=True):
         return spans
 
     def _labels_hidden(self):
-        return bool(self.size.width) and self.size.width < 28
+        return bool(self.size.width) and self.size.width < NARROW_COLUMNS
 
     def on_click(self, event):
         """Clicking a tab switches to it.
@@ -314,9 +326,9 @@ class ModeTabs(Widget, can_focus=True):
                 return
 
     def on_resize(self, event):
-        # Only the crossing of the 28-cell threshold changes the output.
-        was = (self.size.width or 0) < 28
-        if was != (event.size.width < 28):
+        # Only crossing NARROW_COLUMNS changes the output.
+        was = (self.size.width or 0) < NARROW_COLUMNS
+        if was != (event.size.width < NARROW_COLUMNS):
             self.refresh()
 
     def set_quietly(self, mode):
@@ -769,6 +781,9 @@ class LumenApp(App):
         self._poll_timer = None     # stopped on unmount
         self._read_failures = 0     # consecutive failed polls
         self._last_failure = 0.0    # when the last one was
+        # Whether the status row's label is currently dropped. Tracked rather
+        # than recomputed, because on_resize cannot see the App's old width.
+        self._was_narrow = False
         # What the user last asked each control to be, kept until the bulb
         # reports that value back. A reading that disagrees is pre-write
         # state that arrived late, and must not move the control.
@@ -809,6 +824,7 @@ class LumenApp(App):
     def on_mount(self):
         self.reflow_swatches()
         self.reflow_spacing()
+        self._was_narrow = (self.size.width - PANEL_CHROME) < NARROW_COLUMNS
         self._poll_timer = self.set_interval(POLL_INTERVAL, self.poll)
         # A first run has no credentials, and "not connected" is unhelpful
         # when the real answer is that nothing has been set up yet. Open
@@ -826,6 +842,22 @@ class LumenApp(App):
         # at this point, so reflowing from it lags a resize behind.
         self.reflow_swatches(event.size.width)
         self.reflow_spacing(event.size.height)
+        # The status row's label appears and disappears at NARROW_COLUMNS, and
+        # nothing else repaints it - it is a Label the app writes into, not a
+        # widget with its own render(). Only on an actual crossing, so a drag
+        # does not rewrite it on every one of ~46 resize events.
+        #
+        # The previous width is remembered rather than read back from
+        # self.size, and the new one is passed down explicitly: within a
+        # resize handler self.size is still the OLD size, so both the
+        # crossing test and the label itself have to come from event.size.
+        narrow = event.size.width - PANEL_CHROME < NARROW_COLUMNS
+        if narrow != self._was_narrow:
+            self._was_narrow = narrow
+            try:
+                self.render_status(event.size.width)
+            except NoMatches:
+                pass
 
     def reflow_spacing(self, height=None):
         """Drop the breathing room when the terminal is too short for it.
@@ -858,9 +890,9 @@ class LumenApp(App):
             return
         if width is None:
             width = self.size.width
-        # The panel's border and padding cost 6 cells; each swatch needs
-        # SWATCH_WIDTH.
-        usable = width - 6
+        # The panel's border and padding cost PANEL_CHROME cells; each swatch
+        # needs SWATCH_WIDTH.
+        usable = width - PANEL_CHROME
         fits = usable // SWATCH_WIDTH
 
         # Prefer the tidy 5-wide pair of rows. Only go wider when *all ten*
@@ -939,10 +971,33 @@ class LumenApp(App):
         self.apply_state(state)
         self.query_one("#brightness", Bar).focus()
 
+    def _row_label(self, text, width=None):
+        """The status row's label, padded to line its value up with the bars.
+
+        Dropped below the same width at which ModeTabs drops "MODE" and Bar
+        shrinks its track. Keeping it on a narrow terminal cost 12 of 20
+        columns and pushed the actual state off the right edge - the label is
+        the disposable half of the row, not the reading.
+
+        `width` must be passed from a resize handler: self.size is still the
+        OLD width there, so defaulting to it renders the label for the size
+        the terminal just stopped being - the same trap as reflow_swatches.
+        """
+        if width is None:
+            width = self.size.width
+        # self.size is the screen; the row sits inside the panel, so compare
+        # the width the row actually gets - the same number ModeTabs sees.
+        if width and width - PANEL_CHROME < NARROW_COLUMNS:
+            return ""
+        return f"[$text-muted]{text:<{BAR_LABEL_CELLS - 1}}[/]"
+
     def _on_disconnected(self, text):
         self.connected = False
         power = self.query_one("#power", Label)
-        power.update("[$error]○[/]  not connected")
+        power.update(
+            f"{self._row_label('STATUS')}"
+            "[$error]○[/]  not connected"
+        )
         power.set_classes([])
         self._set_message(text, error=True)
 
@@ -1042,7 +1097,7 @@ class LumenApp(App):
         except NoMatches:
             return
 
-    def render_status(self):
+    def render_status(self, width=None):
         """The line at the top. Reads self.state, corrected by any intent.
 
         Kept separate from apply_state so a keypress can refresh it straight
@@ -1053,6 +1108,7 @@ class LumenApp(App):
         power = self.query_one("#power", Label)
         dot = "[$success]●[/]" if state.power else "[$text-muted]○[/]"
         power.update(
+            f"{self._row_label('STATUS', width)}"
             f"{dot}  [$text]{'on' if state.power else 'off'}[/]"
             f"   [$text-muted]{state.brightness}% · {state.mode}[/]"
         )
