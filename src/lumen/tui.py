@@ -279,7 +279,11 @@ class ModeTabs(Widget, can_focus=True):
         # thing Bar does with its track.
         if self.size.width and self.size.width < NARROW_COLUMNS:
             return f"{caret}{tabs}"
-        return f"{caret}{'MODE':<12}" + tabs
+        # Styled explicitly rather than left to inherit the widget's colour:
+        # bare text rendered dimmer than the STATUS and bar labels beside it,
+        # so the row labels did not look like one set. Same focus rule as Bar.
+        tone = "$text" if self.has_focus else "$text-muted"
+        return f"{caret}[{tone}]{'MODE':<12}[/]" + tabs
 
     def _tab_spans(self):
         """(mode, first_cell, last_cell) for each tab, as rendered.
@@ -996,7 +1000,7 @@ class LumenApp(App):
         power = self.query_one("#power", Label)
         power.update(
             f"{self._row_label('STATUS')}"
-            "[$error]○[/]  not connected"
+            "[$error]○[/] not connected"
         )
         power.set_classes([])
         self._set_message(text, error=True)
@@ -1109,7 +1113,7 @@ class LumenApp(App):
         dot = "[$success]●[/]" if state.power else "[$text-muted]○[/]"
         power.update(
             f"{self._row_label('STATUS', width)}"
-            f"{dot}  [$text]{'on' if state.power else 'off'}[/]"
+            f"{dot} [$text]{'ON' if state.power else 'OFF'}[/]"
             f"   [$text-muted]{state.brightness}% · {state.mode}[/]"
         )
         power.set_classes(["on" if state.power else "off"])
