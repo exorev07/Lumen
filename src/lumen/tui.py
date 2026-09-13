@@ -128,6 +128,19 @@ MIN_TERM_HEIGHT = 24
 # the palette is what is costing us a real binding.
 FOOTER_PALETTE_COLUMNS = 63
 
+# Below this width the too-small notice uses short labels ("now:" / "min:")
+# instead of "Current size:" / "Minimum size:". Measured: the long form wraps
+# below 24 columns, and a wrapped line can push the minimum off a short
+# screen - which is the one number the user needs to act on.
+TOO_SMALL_LABEL_COLUMNS = 24
+
+# Below this many rows the refused-action line is dropped from the too-small
+# notice. Measured: the notice needs 4 rows (heading, blank, two sizes) and
+# the Footer takes one, so at 5 rows the note would push "min:" - the number
+# the user needs - off the screen. The block on ctrl+p still holds; only the
+# explanation goes.
+TOO_SMALL_NOTE_ROWS = 7
+
 # Below this width even the bindings alone do not fit (51, measured as
 # above), so the least useful one is hidden rather than left half-drawn.
 # `space toggle` goes first: power is also on `o` and `f`, which are still
@@ -789,8 +802,16 @@ class LumenApp(App):
     #too-small {
         width: 100%;
         height: 100%;
-        content-align: center middle;
-        text-align: center;
+        /* Top-left, not centred: at the sizes this appears at there is very
+           little room, and centred text moves as the window is dragged -
+           which is exactly when the user is reading it. Anchored, it stays
+           put and only the numbers change. One column of padding so it is
+           not flush against the terminal edge. */
+        content-align: left top;
+        text-align: left;
+        /* No padding: at the sizes this appears at a column is worth more
+           than the inset, and on a 1-column terminal the padding made the
+           screen scrollable - which the whole floor exists to avoid. */
         color: $text-muted;
         background: $surface;
     }
@@ -1053,9 +1074,9 @@ class LumenApp(App):
         """Paint the notice, and optionally a line about a refused action.
 
         `extra` goes on its own bottom-docked line rather than into the
-        notice text: the notice is centred in the whole screen, so appending
-        to it shifts the size readout off centre. It also has to live
-        somewhere visible - #message is on #panel, which is hidden here.
+        notice text, so it sits at the bottom of the screen instead of
+        trailing the readout. It also has to live somewhere visible -
+        #message is on #panel, which is hidden at this size.
 
         Passing extra=None clears the line, so a resize wipes a stale
         refusal rather than leaving it under a size it no longer refers to.
@@ -1068,13 +1089,27 @@ class LumenApp(App):
         width, height = self._too_small_size
         # Name both numbers: "too small" without a target leaves the user
         # dragging the window blind.
+        # "Current"/"Minimum" wrap below 24 columns, and a wrapped line can
+        # push the minimum - the number the user actually needs - off a
+        # short screen. Drop to the short labels rather than let that happen.
+        cur, mini = ("Current size:", "Minimum size:")
+        if width < TOO_SMALL_LABEL_COLUMNS:
+            cur, mini = ("now:", "min:")
+        # "Terminal too small" is itself 18 cells and wraps below that,
+        # eating the rows the numbers need. The numbers matter more.
+        heading = "Terminal too small" if width >= 18 else "Too small"
         notice.update(
-            f"[$warning]Terminal too small[/]\n\n"
-            f"[$text]{width} x {height}[/]\n"
-            f"[$text-muted]needs {MIN_TERM_WIDTH} x {MIN_TERM_HEIGHT}[/]"
+            f"[$warning]{heading}[/]\n\n"
+            f"[$text-muted]{cur}[/] [$text]{width} x {height}[/]\n"
+            f"[$text-muted]{mini}[/] [$text]{MIN_TERM_WIDTH} x {MIN_TERM_HEIGHT}[/]"
         )
-        note.update(extra or "")
-        note.set_class(not extra, "hidden")
+        # The refusal line competes with the notice for rows on a very short
+        # terminal, and it loses: "min:" is the number the user has to act
+        # on, the refusal is only an explanation. Below this the line is
+        # dropped rather than allowed to push the minimum off the screen.
+        room_for_note = height >= TOO_SMALL_NOTE_ROWS
+        note.update(extra if (extra and room_for_note) else "")
+        note.set_class(not (extra and room_for_note), "hidden")
 
     def reflow_footer(self, width=None):
         """Fit the footer to the width instead of letting it clip.
