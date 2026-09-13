@@ -553,9 +553,13 @@ class SettingsScreen(ModalScreen):
     }
 
     #settings-box {
-        width: 90%;
+        /* Smaller than the 90%/90% it started at, so the dimmed panel shows
+           around every edge and this reads as a dialog floating over the
+           app rather than a second screen. The box scrolls, so trading
+           height for margin costs reachability nothing. */
+        width: 80%;
         max-width: 100;
-        height: 90%;
+        height: 75%;
         padding: 1 2;
         /* Thin, so the scrollbar costs one column rather than two. */
         scrollbar-size-vertical: 1;
@@ -644,13 +648,17 @@ class SettingsScreen(ModalScreen):
                 "Set in the environment, so changes here will not apply: "
                 + ", ".join(pinned),
             )
-        # Focus the first field so typing works immediately - but do NOT let
-        # that scroll the box. Now that the whole box scrolls (rather than
-        # just the steps), focusing a field below the fold drags the view
-        # down to it, and Settings opened showing the device-id field with
-        # the walkthrough scrolled off the top. That is backwards for the
-        # one screen a stranger meets first: the instructions are the point.
-        self.query_one("#f-device-id", Input).focus(scroll_visible=False)
+        # Nothing is focused on open, deliberately. A highlighted input pulls
+        # the eye to a field before the reader has met the steps explaining
+        # where its value comes from - and this is the one screen a stranger
+        # meets first, so the walkthrough should be what they see. `tab` (or
+        # a click) starts typing.
+        #
+        # It also sidesteps a trap: focus() drags a scrolling container down
+        # to the focused widget, so autofocusing a field below the fold
+        # opened Settings with the instructions scrolled off the top. If a
+        # field is ever autofocused again, it needs focus(scroll_visible=False)
+        # and an explicit scroll_home().
         self.query_one("#settings-box").scroll_home(animate=False)
 
     def _say(self, text, error=False, ok=False):
