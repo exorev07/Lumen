@@ -567,7 +567,6 @@ class SettingsScreen(ModalScreen):
         border: round $primary;
         border-title-color: $primary;
         border-title-style: bold;
-        border-subtitle-color: $text-muted;
         background: $surface;
     }
 
@@ -585,8 +584,24 @@ class SettingsScreen(ModalScreen):
 
     #fields { height: auto; padding-top: 1; }
 
-    #fields Label { padding-left: 1; color: $text-muted; }
-    #fields Input { margin-bottom: 1; }
+    /* The same white the `brightness` and `warmth` bar labels render, so
+       the field headings read as one set with the main UI.
+       NOT `$text`: that is an alpha colour, so it blends with whatever is
+       behind it, and on the modal's background it came out #e1e1e1 against
+       the #ffffff of the bar labels - visibly dimmer, the same trap that
+       made MODE look wrong. Measured by sampling the rendered cell's
+       style, since the first segment containing a word is usually the
+       row's leading padding rather than the text itself. */
+    #fields Label { padding-left: 1; color: #ffffff; }
+    /* A subtle border so each field reads as a box. $panel-lighten-2 is a
+       hair above the background - enough to bound it, not enough to compete
+       with the $primary the focused field switches to. Background is left
+       alone deliberately: the fields inherit the box's. */
+    #fields Input {
+        margin-bottom: 1;
+        border: round $panel-lighten-2;
+    }
+    #fields Input:focus { border: round $primary; }
 
     #settings-message { padding-left: 1; height: auto; }
 
@@ -599,8 +614,16 @@ class SettingsScreen(ModalScreen):
         align-horizontal: right;
         padding: 1 1 0 0;
     }
+    /* Only the size is overridden. Button already sets height: auto,
+       text-align: center and content-align: center middle - pinning
+       height to an even number fought that and left "Save" sitting low in
+       its block while "Back" sat high. `border: none` is what makes it one
+       row shorter than stock (the default is `tall`, which adds a row above
+       and below); the label stays centred because Button centres it. */
     #settings-buttons Button {
-        min-width: 10;
+        min-width: 8;
+        padding: 0 2;
+        border: none;
         margin-left: 2;
     }
     #settings-message.error { color: $error; }
@@ -623,25 +646,28 @@ class SettingsScreen(ModalScreen):
         # can be pushed off a short terminal and become unreachable.
         box = VerticalScroll(id="settings-box")
         box.border_title = "SETTINGS"
-        box.border_subtitle = "ctrl+s save · esc back"
+        # No border subtitle. It named the two shortcuts but was painted
+        # text, so clicking it did nothing - and the same two actions are
+        # now a pair of real Buttons inside the box and clickable keys in
+        # the Footer. Three copies of one hint, only one of them inert.
         with box:
             with Vertical(id="steps"):
                 yield Static(SETUP_STEPS)
             with Vertical(id="fields"):
-                yield Label("device id")
+                yield Label("DEVICE ID")
                 yield Input(
                     value=self._settings.device_id,
                     placeholder="e.g. bf1a2b3c4d5e6f7a8b9c0d",
                     id="f-device-id",
                 )
-                yield Label("local key")
+                yield Label("LOCAL KEY")
                 yield Input(
                     value=self._settings.local_key,
                     placeholder="22 characters from devices.json",
                     password=True,
                     id="f-local-key",
                 )
-                yield Label("ip address (optional)")
+                yield Label("IP ADDRESS (OPTIONAL)")
                 yield Input(
                     value=self._settings.ip,
                     placeholder="blank to scan the network",
