@@ -68,13 +68,17 @@ BAR_CHROME = BAR_LABEL_CELLS + 1 + 3 + 3
 # Caret, block, space and the longest colour name ("magenta").
 SWATCH_WIDTH = 12
 
-# Swatch columns. Ten colours, so 5 gives the tidy two rows; a wide terminal
-# is allowed to go to 10 and put them on one line rather than leaving the
-# space unused. A narrower one wraps onto more rows.
 # Below this many columns the row labels ("STATUS", "MODE") are dropped and
 # the value takes the whole width. One constant, because the status row and
 # the mode row must cross the threshold together or they stop lining up.
 # Measured against the WIDGET's width, not the screen's - see PANEL_CHROME.
+#
+# NOTE: currently unreachable. 28 + PANEL_CHROME = 34 screen columns, but the
+# UI is replaced by the too-small notice below MIN_TERM_WIDTH (44), so the
+# labels can never actually drop. Kept because MIN_TERM_WIDTH is set by the
+# colour layout - if the swatches or the hex row ever go, the floor comes
+# down with them and this becomes live again. Do not "simplify" the label
+# branches away without lowering MIN_TERM_WIDTH first.
 NARROW_COLUMNS = 28
 
 # The panel's border and padding, which every child is inset by. A widget is
@@ -83,13 +87,35 @@ NARROW_COLUMNS = 28
 # label at 34 screen columns rather than 28.
 PANEL_CHROME = 6
 
+# The smallest terminal the UI is shown in. Below either number the panel is
+# replaced by a "terminal too small" notice, the way btop and htop do it - a
+# TUI cannot stop the window being resized (the emulator owns that, and
+# Windows Terminal ignores the escape sequence that asks), so the only honest
+# options are to degrade, to clip, or to say so. Saying so keeps the
+# threshold explicit instead of quietly dropping controls.
+#
+# Measured against the *colour* layout, the taller of the two modes: border,
+# padding, status + gap, mode + gap, brightness, gap, the "colour" heading,
+# two swatch rows, gap, hex input, message, padding, border = 18, plus one
+# row for the Footer. Width is the mode row plus PANEL_CHROME, rounded up to
+# keep the swatch grid at its two-row shape.
+MIN_TERM_WIDTH = 44
+MIN_TERM_HEIGHT = 19
+
 # Below this many rows the panel drops the gap under the mode row - see
 # reflow_spacing(). Measured, not guessed: with the gap in, the full
 # white-mode layout (power, mode, both bars, message, borders) keeps both
-# bars down to 12 rows and loses warmth at 11. Raising this collapses the
-# gap on terminals that can afford it; lowering it costs a bar.
+# bars down to 12 rows and loses warmth at 11.
+#
+# NOTE: unreachable for the same reason as NARROW_COLUMNS - MIN_TERM_HEIGHT
+# (19) is above it, so the UI is never rendered at a height that would
+# trigger it. Kept for the same reason: it becomes live again if the floor
+# ever comes down. reflow_spacing() is still tested directly.
 COMPACT_ROWS = 12
 
+# Swatch columns. Ten colours, so 5 gives the tidy two rows; a wide terminal
+# is allowed to go to 10 and put them on one line rather than leaving the
+# space unused. A narrower one wraps onto more rows.
 SWATCH_COLUMNS_MIN = 1
 SWATCH_COLUMNS_PREFERRED = 5
 SWATCH_COLUMNS_MAX = 10
@@ -625,13 +651,21 @@ class LumenApp(App):
     CSS = """
     Screen {
         background: $surface;
+        /* No scrolling. Below MIN_TERM_* the panel is swapped for the
+           too-small notice, so it is never rendered into a space that
+           cannot hold it. */
+        overflow: hidden;
     }
 
     /* The one box everything lives in. It fills the terminal rather than
        floating in the middle of it - this is the whole app, not a dialog. */
     #panel {
-        width: 100%;
-        height: 100%;
+        /* 1fr, not 100%: a percentage resolves against the (small) screen and
+           beats min-width, so the panel shrank to 17x8 and clipped anyway.
+           1fr grows to fill a large terminal while still honouring the
+           floor below. */
+        width: 1fr;
+        height: 1fr;
         padding: 1 2;
         border: round $primary;
         border-title-color: $primary;
@@ -646,7 +680,8 @@ class LumenApp(App):
 
     /* Warmth is meaningless in colour mode, so it is hidden there rather than
        left on screen doing nothing. [hidden] removes it from the layout. */
-    #warmth.hidden, #swatches.hidden, #hex.hidden, #colour-label.hidden {
+    #warmth.hidden, #swatches.hidden, #hex.hidden, #colour-label.hidden,
+    #panel.hidden, #too-small.hidden {
         display: none;
     }
 
@@ -665,6 +700,7 @@ class LumenApp(App):
 
     /* A short terminal cannot afford the mode gap - see reflow_spacing(). */
     #panel.compact ModeTabs { margin: 0 0 1 0; }
+
 
     .section {
         height: 1;
@@ -705,6 +741,19 @@ class LumenApp(App):
     #spacer {
         height: 1fr;
         min-height: 0;
+    }
+
+    /* Shown in place of the panel when the terminal cannot hold it. Centred
+       and deliberately plain - it has to render in a space too small for
+       anything else, so no border and no padding it might not have room
+       for. */
+    #too-small {
+        width: 100%;
+        height: 100%;
+        content-align: center middle;
+        text-align: center;
+        color: $text-muted;
+        background: $surface;
     }
 
     #message {
@@ -823,9 +872,14 @@ class LumenApp(App):
 
             yield Static("", id="message")
 
+        # Swapped in for the panel when the terminal is too small to hold it
+        # - see check_terminal_size(). Hidden at normal sizes.
+        yield Static("", id="too-small", classes="hidden")
+
         yield Footer()
 
     def on_mount(self):
+        self.check_terminal_size()
         self.reflow_swatches()
         self.reflow_spacing()
         self._was_narrow = (self.size.width - PANEL_CHROME) < NARROW_COLUMNS
@@ -844,6 +898,7 @@ class LumenApp(App):
     def on_resize(self, event):
         # Take the size from the event: self.size still holds the old one
         # at this point, so reflowing from it lags a resize behind.
+        self.check_terminal_size(event.size.width, event.size.height)
         self.reflow_swatches(event.size.width)
         self.reflow_spacing(event.size.height)
         # The status row's label appears and disappears at NARROW_COLUMNS, and
@@ -862,6 +917,34 @@ class LumenApp(App):
                 self.render_status(event.size.width)
             except NoMatches:
                 pass
+
+    def check_terminal_size(self, width=None, height=None):
+        """Show the panel, or a notice saying the terminal is too small.
+
+        A TUI cannot refuse a resize - the emulator owns the window - so the
+        alternative to this is silently dropping controls, which is what the
+        layout used to do. btop and htop take the same approach.
+        """
+        if width is None:
+            width = self.size.width
+        if height is None:
+            height = self.size.height
+        too_small = width < MIN_TERM_WIDTH or height < MIN_TERM_HEIGHT
+        try:
+            panel = self.query_one("#panel")
+            notice = self.query_one("#too-small", Static)
+        except NoMatches:
+            return
+        panel.set_class(too_small, "hidden")
+        notice.set_class(not too_small, "hidden")
+        if too_small:
+            # Name both numbers: "too small" without a target leaves the user
+            # dragging the window blind.
+            notice.update(
+                f"[$warning]Terminal too small[/]\n\n"
+                f"[$text]{width} x {height}[/]\n"
+                f"[$text-muted]needs {MIN_TERM_WIDTH} x {MIN_TERM_HEIGHT}[/]"
+            )
 
     def reflow_spacing(self, height=None):
         """Drop the breathing room when the terminal is too short for it.
