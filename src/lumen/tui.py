@@ -778,6 +778,12 @@ class LumenApp(App):
 
     TITLE = "lumen"
 
+    # Everything below is written against the design tokens ($primary,
+    # $surface, $text ...), so the theme is the one place the palette is
+    # chosen. Switchable at runtime from the ctrl+p palette; this is only
+    # the default.
+    theme = "monokai"
+
     CSS = """
     Screen {
         background: $surface;
