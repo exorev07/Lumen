@@ -95,13 +95,24 @@ PANEL_CHROME = 6
 # options are to degrade, to clip, or to say so. Saying so keeps the
 # threshold explicit instead of quietly dropping controls.
 #
-# Measured against the *colour* layout, the taller of the two modes: border,
-# padding, status + gap, mode + gap, brightness, gap, the "colour" heading,
-# two swatch rows, gap, hex input, message, padding, border = 18, plus one
-# row for the Footer. Width is the mode row plus PANEL_CHROME, rounded up to
-# keep the swatch grid at its two-row shape.
+# Width is the mode row plus PANEL_CHROME, rounded up to keep the swatch
+# grid at its two-row shape.
+#
+# Height is set by the ctrl+p command palette, not by the panel. The colour
+# layout - the taller of the two modes: border, padding, status + gap, mode
+# + gap, brightness, gap, the "colour" heading, two swatch rows, gap, hex
+# input, message, padding, border = 18, plus one row for the Footer - needs
+# only 19. But the palette is an overlay sized by our own CSS (margin-top 6,
+# a 3-row input, a 12-row CommandList, plus borders), and at 19 it ran
+# straight off the bottom: it painted over the panel's border and the
+# footer, and the command list was cut mid-entry.
+#
+# 24 is measured, not padded - it is the first height at which the overlay's
+# bottom border lands above the panel's and the footer survives. At 23 the
+# two borders collide. So if the palette's CSS changes, this moves with it;
+# re-measure rather than assuming the panel's 19 still governs.
 MIN_TERM_WIDTH = 44
-MIN_TERM_HEIGHT = 19
+MIN_TERM_HEIGHT = 24
 
 # Below this width the footer stops advertising the command palette. The
 # palette key is `dock: right`, so without this it is the one thing that
