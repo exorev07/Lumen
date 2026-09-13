@@ -875,6 +875,11 @@ class LumenApp(App):
         # reflow_footer(). Starts True so the binding is not hidden
         # before the first resize has measured anything.
         self._footer_show_toggle = True
+        # Whether the too-small notice is currently up, and the size it
+        # is reporting - see check_terminal_size(). Starts False so the
+        # palette is not refused before the first measurement.
+        self._too_small = False
+        self._too_small_size = (0, 0)
         self._last_failure = 0.0    # when the last one was
         # Whether the status row's label is currently dropped. Tracked rather
         # than recomputed, because on_resize cannot see the App's old width.
@@ -981,16 +986,37 @@ class LumenApp(App):
             notice = self.query_one("#too-small", Static)
         except NoMatches:
             return
+        # Remembered so action_command_palette can refuse without re-deriving
+        # the test - and so it cannot disagree with what is on screen.
+        self._too_small = too_small
+        self._too_small_size = (width, height)
         panel.set_class(too_small, "hidden")
         notice.set_class(not too_small, "hidden")
         if too_small:
-            # Name both numbers: "too small" without a target leaves the user
-            # dragging the window blind.
-            notice.update(
-                f"[$warning]Terminal too small[/]\n\n"
-                f"[$text]{width} x {height}[/]\n"
-                f"[$text-muted]needs {MIN_TERM_WIDTH} x {MIN_TERM_HEIGHT}[/]"
-            )
+            self._show_too_small_notice()
+
+    def _show_too_small_notice(self, extra=None):
+        """Paint the notice.
+
+        `extra` adds a line explaining an action that was just refused. It
+        goes here because #message lives on #panel, which is hidden at this
+        size - the notice is the only surface the user can actually see.
+        """
+        try:
+            notice = self.query_one("#too-small", Static)
+        except NoMatches:
+            return
+        width, height = self._too_small_size
+        # Name both numbers: "too small" without a target leaves the user
+        # dragging the window blind.
+        body = (
+            f"[$warning]Terminal too small[/]\n\n"
+            f"[$text]{width} x {height}[/]\n"
+            f"[$text-muted]needs {MIN_TERM_WIDTH} x {MIN_TERM_HEIGHT}[/]"
+        )
+        if extra:
+            body += f"\n\n[$text-muted]{extra}[/]"
+        notice.update(body)
 
     def reflow_footer(self, width=None):
         """Fit the footer to the width instead of letting it clip.
@@ -1311,6 +1337,30 @@ class LumenApp(App):
         focused = self.focused
         if focused is not None and not focused.display:
             self.query_one("#brightness", Bar).focus()
+
+    def action_command_palette(self):
+        """Refuse ctrl+p while the too-small notice is up.
+
+        The palette is a separate screen pushed over this one, so hiding
+        #panel does not hide it: at 44x20 it covered the notice completely
+        (the one thing telling you how to fix the situation), and at every
+        size below the floor it ran off the bottom with the command list cut
+        mid-entry. Its height comes from our own CSS - which is what sets
+        MIN_TERM_HEIGHT in the first place - so there is no size below the
+        floor where it can be drawn honestly.
+
+        Settings (`s`) is deliberately NOT blocked the same way: it is a
+        self-contained bordered screen that scrolls and keeps its own footer,
+        so it stays usable on a small terminal, and it is the one screen a
+        stranger may actually need before anything else works.
+        """
+        if self._too_small:
+            # #message lives on the hidden panel, so the notice is the only
+            # place feedback can be seen from here.
+            self._show_too_small_notice(extra="ctrl+p needs more room")
+            self.bell()
+            return
+        super().action_command_palette()
 
     def action_settings(self):
         """Open Settings, prefilled with whatever is configured now."""
