@@ -6,6 +6,7 @@ coalesced behind a short timer - dragging brightness end to end should be
 one write at the end, not forty on the way.
 """
 
+import dataclasses
 import time
 import threading
 
@@ -101,6 +102,30 @@ PANEL_CHROME = 6
 # keep the swatch grid at its two-row shape.
 MIN_TERM_WIDTH = 44
 MIN_TERM_HEIGHT = 19
+
+# Below this width the footer stops advertising the command palette. The
+# palette key is `dock: right`, so without this it is the one thing that
+# always survives while the app's own bindings clip mid-word - "r refres"
+# with `s settings` and `q quit` gone entirely. That is backwards: ctrl+p
+# opens Textual's built-in commands, not ours, so it is the cheapest thing
+# on the row to drop. The binding still works, it just stops taking space
+# to say so.
+#
+# Measured, not guessed. With `compact` on, all six bindings need 63 columns
+# with the palette key and 51 without it, so this sits above 63 - below that
+# the palette is what is costing us a real binding.
+FOOTER_PALETTE_COLUMNS = 63
+
+# Below this width even the bindings alone do not fit (51, measured as
+# above), so the least useful one is hidden rather than left half-drawn.
+# `space toggle` goes first: power is also on `o` and `f`, which are still
+# shown, so the action stays reachable and labelled - unlike `q quit`,
+# whose key is the only way out.
+#
+# Textual's FooterKey sets `shrink = False`, so a key that does not fit is
+# clipped rather than dropped - there is no built-in "hide what will not
+# fit", hence doing it here.
+FOOTER_ALL_KEYS_COLUMNS = 51
 
 # Below this many rows the panel drops the gap under the mode row - see
 # reflow_spacing(). Measured, not guessed: with the gap in, the full
@@ -573,7 +598,9 @@ class SettingsScreen(ModalScreen):
                     id="f-ip",
                 )
             yield Static("", id="settings-message")
-        yield Footer()
+        # Compact for consistency with the main screen; these two
+        # bindings are short enough that it never had a fit problem.
+        yield Footer(compact=True)
 
     def on_mount(self):
         # Env vars override the file, so editing a field the environment has
@@ -833,6 +860,10 @@ class LumenApp(App):
         self._debounce = {}     # per-control debounce timers
         self._poll_timer = None     # stopped on unmount
         self._read_failures = 0     # consecutive failed polls
+        # Whether the footer currently shows `space toggle` - see
+        # reflow_footer(). Starts True so the binding is not hidden
+        # before the first resize has measured anything.
+        self._footer_show_toggle = True
         self._last_failure = 0.0    # when the last one was
         # Whether the status row's label is currently dropped. Tracked rather
         # than recomputed, because on_resize cannot see the App's old width.
@@ -876,12 +907,15 @@ class LumenApp(App):
         # - see check_terminal_size(). Hidden at normal sizes.
         yield Static("", id="too-small", classes="hidden")
 
-        yield Footer()
+        # compact tightens the inter-key margins, which buys 6 columns
+        # (69 -> 63) before anything clips. reflow_footer() does the rest.
+        yield Footer(compact=True)
 
     def on_mount(self):
         self.check_terminal_size()
         self.reflow_swatches()
         self.reflow_spacing()
+        self.reflow_footer()
         self._was_narrow = (self.size.width - PANEL_CHROME) < NARROW_COLUMNS
         self._poll_timer = self.set_interval(POLL_INTERVAL, self.poll)
         # A first run has no credentials, and "not connected" is unhelpful
@@ -901,6 +935,7 @@ class LumenApp(App):
         self.check_terminal_size(event.size.width, event.size.height)
         self.reflow_swatches(event.size.width)
         self.reflow_spacing(event.size.height)
+        self.reflow_footer(event.size.width)
         # The status row's label appears and disappears at NARROW_COLUMNS, and
         # nothing else repaints it - it is a Label the app writes into, not a
         # widget with its own render(). Only on an actual crossing, so a drag
@@ -945,6 +980,55 @@ class LumenApp(App):
                 f"[$text]{width} x {height}[/]\n"
                 f"[$text-muted]needs {MIN_TERM_WIDTH} x {MIN_TERM_HEIGHT}[/]"
             )
+
+    def reflow_footer(self, width=None):
+        """Fit the footer to the width instead of letting it clip.
+
+        Textual's FooterKey sets `shrink = False`, so a key that does not
+        fit is drawn half-way and then cut - "r refres" - and the keys after
+        it vanish with no indication they exist. Worse, the palette key is
+        `dock: right`, so it is the survivor while the app's own bindings go.
+
+        Two steps down, both measured (see the constants): drop the palette
+        first, then the one binding whose action is still reachable and
+        labelled by another key.
+        """
+        if width is None:
+            width = self.size.width
+        try:
+            footer = self.query_one(Footer)
+        except NoMatches:
+            return
+        show_palette = width >= FOOTER_PALETTE_COLUMNS
+        if show_palette != footer.show_command_palette:
+            footer.show_command_palette = show_palette
+            # Nothing watches that reactive, so it only takes effect the next
+            # time the footer happens to recompose - which meant resizing
+            # 100 -> 55 kept the palette key and clipped the row, while
+            # 100 -> 46 looked fine only because the `space` change below
+            # forced a rebuild. Ask for one explicitly; recompose() is a
+            # coroutine and this handler is not, hence call_next.
+            footer.call_next(footer.recompose)
+        # `space` duplicates `o`/`f`, so hiding it costs no discoverability
+        # that the remaining keys do not already carry.
+        show_toggle = width >= FOOTER_ALL_KEYS_COLUMNS
+        if show_toggle != self._footer_show_toggle:
+            self._footer_show_toggle = show_toggle
+            # `show` is presentational only - Footer.compose filters on it,
+            # but dispatch does not, so the key keeps working while hidden.
+            # check_action looks like the tidier hook and is not: returning
+            # False from it *disables* the binding as well as hiding it, so
+            # space stopped toggling at every width. There is no
+            # "hidden but active" return value.
+            #
+            # Binding is a frozen dataclass, hence replace() rather than an
+            # assignment to binding.show.
+            bound = self._bindings.key_to_bindings.get("space")
+            if bound:
+                self._bindings.key_to_bindings["space"] = [
+                    dataclasses.replace(b, show=show_toggle) for b in bound
+                ]
+            self.refresh_bindings()
 
     def reflow_spacing(self, height=None):
         """Drop the breathing room when the terminal is too short for it.
