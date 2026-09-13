@@ -40,6 +40,10 @@ Run `lumen` with no arguments and you get the interface:
 | `s` | settings |
 | `q` | quit |
 
+Every key works at any window size. The hint bar along the bottom shows
+fewer of them on a narrow terminal rather than cutting labels in half, so
+it may list less than the table above — the keys themselves still work.
+
 The mouse works too: click a colour to set it, click a mode to switch,
 click anywhere on a bar to jump to that level, or drag to scrub.
 
