@@ -557,6 +557,8 @@ class SettingsScreen(ModalScreen):
         max-width: 100;
         height: 90%;
         padding: 1 2;
+        /* Thin, so the scrollbar costs one column rather than two. */
+        scrollbar-size-vertical: 1;
         border: round $primary;
         border-title-color: $primary;
         border-title-style: bold;
@@ -564,14 +566,16 @@ class SettingsScreen(ModalScreen):
         background: $surface;
     }
 
-    /* The steps scroll; the fields below them stay put, so the Save row is
-       always reachable without scrolling to the bottom. */
+    /* The whole box scrolls as one, steps and fields together. It used to
+       be only #steps, with the fields pinned below on a fixed row - which
+       kept Save reachable but meant the fields themselves got squeezed
+       until, on a short terminal, the ip field and the message line were
+       simply not there. One scrolling region cannot lose a control: it is
+       always reachable by scrolling to it. */
     #steps {
-        height: 1fr;
-        min-height: 6;
+        height: auto;
         padding: 0 1;
         color: $text-muted;
-        scrollbar-size-vertical: 1;
     }
 
     #fields { height: auto; padding-top: 1; }
@@ -596,11 +600,13 @@ class SettingsScreen(ModalScreen):
         self._settings = settings
 
     def compose(self) -> ComposeResult:
-        box = Vertical(id="settings-box")
+        # VerticalScroll, not Vertical: the whole box scrolls, so no control
+        # can be pushed off a short terminal and become unreachable.
+        box = VerticalScroll(id="settings-box")
         box.border_title = "SETTINGS"
         box.border_subtitle = "ctrl+s save · esc back"
         with box:
-            with VerticalScroll(id="steps"):
+            with Vertical(id="steps"):
                 yield Static(SETUP_STEPS)
             with Vertical(id="fields"):
                 yield Label("device id")
@@ -638,7 +644,14 @@ class SettingsScreen(ModalScreen):
                 "Set in the environment, so changes here will not apply: "
                 + ", ".join(pinned),
             )
-        self.query_one("#f-device-id", Input).focus()
+        # Focus the first field so typing works immediately - but do NOT let
+        # that scroll the box. Now that the whole box scrolls (rather than
+        # just the steps), focusing a field below the fold drags the view
+        # down to it, and Settings opened showing the device-id field with
+        # the walkthrough scrolled off the top. That is backwards for the
+        # one screen a stranger meets first: the instructions are the point.
+        self.query_one("#f-device-id", Input).focus(scroll_visible=False)
+        self.query_one("#settings-box").scroll_home(animate=False)
 
     def _say(self, text, error=False, ok=False):
         widget = self.query_one("#settings-message", Static)
