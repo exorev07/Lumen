@@ -13,14 +13,15 @@ import threading
 from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Vertical, VerticalScroll
+from textual.containers import (Container, Horizontal, Vertical,
+                                VerticalScroll)
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.command import CommandPalette
-from textual.widgets import Footer, Input, Label, Static
+from textual.widgets import Button, Footer, Input, Label, Static
 
 from . import config
 from .device import (COLORS, MODE_COLOUR, MODE_WHITE, Bulb, BulbError,
@@ -588,6 +589,20 @@ class SettingsScreen(ModalScreen):
     #fields Input { margin-bottom: 1; }
 
     #settings-message { padding-left: 1; height: auto; }
+
+    /* Right-aligned, to sit under the fields where the eye ends up, and in
+       the same corner the subtitle hint names. height: auto so the row
+       cannot steal space from the scrolling content. */
+    #settings-buttons {
+        height: auto;
+        width: 100%;
+        align-horizontal: right;
+        padding: 1 1 0 0;
+    }
+    #settings-buttons Button {
+        min-width: 10;
+        margin-left: 2;
+    }
     #settings-message.error { color: $error; }
     #settings-message.ok { color: $success; }
     """
@@ -633,6 +648,14 @@ class SettingsScreen(ModalScreen):
                     id="f-ip",
                 )
             yield Static("", id="settings-message")
+            # Real buttons rather than hit-testing the border subtitle.
+            # The subtitle is right-aligned, so its column offsets move
+            # with the box width - a click test against them would drift
+            # exactly the way the ModeTabs one nearly did. Buttons also
+            # show they are clickable, which painted border text does not.
+            with Horizontal(id="settings-buttons"):
+                yield Button("Save", id="btn-save", variant="primary")
+                yield Button("Back", id="btn-back")
         # Compact for consistency with the main screen; these two
         # bindings are short enough that it never had a fit problem.
         yield Footer(compact=True)
@@ -685,6 +708,14 @@ class SettingsScreen(ModalScreen):
             self.action_save()
         else:
             self.focus_next()
+
+    @on(Button.Pressed, "#btn-save")
+    def _save_clicked(self):
+        self.action_save()
+
+    @on(Button.Pressed, "#btn-back")
+    def _back_clicked(self):
+        self.action_cancel()
 
     def action_cancel(self):
         self.dismiss(None)
