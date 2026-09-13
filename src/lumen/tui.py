@@ -19,6 +19,7 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widget import Widget
+from textual.command import CommandPalette
 from textual.widgets import Footer, Input, Label, Static
 
 from . import config
@@ -793,6 +794,25 @@ class LumenApp(App):
         color: $text-muted;
         background: $surface;
     }
+    /* The refused-action line. Docked to the bottom rather than appended to
+       the notice: the notice is centred in the whole screen, so anything
+       added to it shifts the size readout off centre. Sits above the Footer
+       because that is docked too and claims its row first. */
+    #too-small-note {
+        dock: bottom;
+        /* One row of bottom margin lifts this clear of the Footer, which is
+           dock: bottom in Textual's own CSS and otherwise lands on exactly
+           the same row - both were at y=19 on a 20-row screen and the Footer
+           painted over it. Compose order does not settle this; the margin
+           does. */
+        margin-bottom: 1;
+        width: 100%;
+        height: 1;
+        text-align: center;
+        color: $warning;
+        background: $surface;
+    }
+    #too-small-note.hidden { display: none; }
 
     #message {
         height: auto;
@@ -927,6 +947,11 @@ class LumenApp(App):
         # (69 -> 63) before anything clips. reflow_footer() does the rest.
         yield Footer(compact=True)
 
+        # After the Footer, deliberately: both dock to the bottom, and the
+        # LAST one composed claims the outermost row. Yielded before it,
+        # this landed on the Footer's own row and was painted over.
+        yield Static("", id="too-small-note", classes="hidden")
+
     def on_mount(self):
         self.check_terminal_size()
         self.reflow_swatches()
@@ -992,31 +1017,64 @@ class LumenApp(App):
         self._too_small_size = (width, height)
         panel.set_class(too_small, "hidden")
         notice.set_class(not too_small, "hidden")
+        if not too_small:
+            # Leaving the docked line behind would put a stray warning over
+            # the restored panel.
+            try:
+                self.query_one("#too-small-note", Static).add_class("hidden")
+            except NoMatches:
+                pass
         if too_small:
             self._show_too_small_notice()
+            # Refusing to OPEN the palette is not enough: it is a separate
+            # screen, so one already open just stays there and overlaps the
+            # notice - at 50x20 it covered it completely. A resize is not a
+            # keypress, so there is nothing to explain and no bell; it is
+            # dismissed quietly, the way the panel behind it is.
+            self._dismiss_command_palette()
+
+    def _dismiss_command_palette(self):
+        """Close the palette if it is open. Safe to call when it is not.
+
+        CommandPalette.is_open() rather than a screen-stack walk, and pop
+        guarded by that same check - a stale pop would take the Settings
+        screen or the main screen with it.
+        """
+        if not CommandPalette.is_open(self):
+            return
+        try:
+            self.pop_screen()
+        except Exception:
+            # Nothing to pop, or the screen went away between the check and
+            # the pop. Not worth taking the resize handler down for.
+            pass
 
     def _show_too_small_notice(self, extra=None):
-        """Paint the notice.
+        """Paint the notice, and optionally a line about a refused action.
 
-        `extra` adds a line explaining an action that was just refused. It
-        goes here because #message lives on #panel, which is hidden at this
-        size - the notice is the only surface the user can actually see.
+        `extra` goes on its own bottom-docked line rather than into the
+        notice text: the notice is centred in the whole screen, so appending
+        to it shifts the size readout off centre. It also has to live
+        somewhere visible - #message is on #panel, which is hidden here.
+
+        Passing extra=None clears the line, so a resize wipes a stale
+        refusal rather than leaving it under a size it no longer refers to.
         """
         try:
             notice = self.query_one("#too-small", Static)
+            note = self.query_one("#too-small-note", Static)
         except NoMatches:
             return
         width, height = self._too_small_size
         # Name both numbers: "too small" without a target leaves the user
         # dragging the window blind.
-        body = (
+        notice.update(
             f"[$warning]Terminal too small[/]\n\n"
             f"[$text]{width} x {height}[/]\n"
             f"[$text-muted]needs {MIN_TERM_WIDTH} x {MIN_TERM_HEIGHT}[/]"
         )
-        if extra:
-            body += f"\n\n[$text-muted]{extra}[/]"
-        notice.update(body)
+        note.update(extra or "")
+        note.set_class(not extra, "hidden")
 
     def reflow_footer(self, width=None):
         """Fit the footer to the width instead of letting it clip.
@@ -1357,7 +1415,7 @@ class LumenApp(App):
         if self._too_small:
             # #message lives on the hidden panel, so the notice is the only
             # place feedback can be seen from here.
-            self._show_too_small_notice(extra="ctrl+p needs more room")
+            self._show_too_small_notice(extra="Cmd Palette needs more room!")
             self.bell()
             return
         super().action_command_palette()
