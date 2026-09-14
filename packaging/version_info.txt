@@ -1,0 +1,39 @@
+# Windows version resource for lumen.exe.
+#
+# Two reasons this exists. It puts the copyright and MIT licence on the
+# binary itself, where Explorer's Properties > Details tab shows them - a
+# distributed binary should say who owns it without needing a second file.
+# And an exe with no version resource at all looks more anonymous to
+# SmartScreen and to the person reading the prompt.
+#
+# The version is duplicated here as a 4-tuple because the Windows resource
+# format requires one; keep it in step with src/lumen/__init__.py.
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(0, 1, 0, 0),
+    prodvers=(0, 1, 0, 0),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable(
+        '040904B0',
+        [StringStruct('CompanyName', 'exorev07'),
+         StringStruct('FileDescription',
+                      'Lumen - terminal control for Tuya / SmartLife bulbs'),
+         StringStruct('FileVersion', '0.1.0'),
+         StringStruct('InternalName', 'lumen'),
+         StringStruct('LegalCopyright',
+                      'Copyright (c) 2026 Ekansh Arohi. MIT licensed.'),
+         StringStruct('OriginalFilename', 'lumen.exe'),
+         StringStruct('ProductName', 'Lumen'),
+         StringStruct('ProductVersion', '0.1.0')])
+    ]),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)

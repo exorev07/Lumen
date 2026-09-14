@@ -5,6 +5,7 @@ subcommand it does one thing and exits, which is what scripts want.
 """
 
 import argparse
+import pathlib
 import sys
 
 from . import __version__, config
@@ -42,6 +43,10 @@ def build_parser():
     )
     parser.add_argument("--version", action="version",
                         version="lumen %s" % __version__)
+    # Both spellings: the code says "licence", pip and PyPI say "license".
+    parser.add_argument("--licence", "--license", dest="licence",
+                        action="store_true",
+                        help="show the licence, including bundled libraries")
     sub = parser.add_subparsers(dest="cmd")
 
     sub.add_parser("ui", help="open the app (the default)")
@@ -103,8 +108,50 @@ def run_command(bulb, args):
               f"(brightness {bright}%)")
 
 
+def _bundled_dir():
+    """Where our data files live.
+
+    Frozen by PyInstaller, the bundle is unpacked to a temp directory named
+    by `sys._MEIPASS`; running from source or an installed wheel, the
+    licence sits at the repository root, two levels above this module.
+    """
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        return pathlib.Path(base)
+    return pathlib.Path(__file__).resolve().parent.parent.parent
+
+
+def show_licence():
+    """Print Lumen's licence and those of everything bundled with it.
+
+    The exe is a binary redistribution of seventeen third-party libraries
+    whose licences require their text to travel with it. Embedding the
+    text is only half of that - this is how someone actually reads it.
+    """
+    base = _bundled_dir()
+    shown = False
+    for name, heading in (("LICENSE", "Lumen"),
+                          ("THIRD-PARTY-LICENSES.txt", None)):
+        f = base / name
+        if not f.exists():
+            continue
+        if heading:
+            print("%s is licensed as follows." % heading)
+            print()
+        print(f.read_text(encoding="utf-8", errors="replace").rstrip())
+        print()
+        shown = True
+    if not shown:
+        print("Lumen is MIT licensed. Copyright (c) 2026 Ekansh Arohi.")
+        print("Full text: https://github.com/exorev07/Lumen/blob/main/LICENSE")
+
+
 def main():
     args = build_parser().parse_args()
+
+    if getattr(args, "licence", False):
+        show_licence()
+        return
 
     if args.cmd in (None, "ui"):
         from . import tui
