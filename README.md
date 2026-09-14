@@ -9,9 +9,9 @@
 ![Licence](https://img.shields.io/badge/Licence-MIT-green)
 ![Release](https://img.shields.io/badge/Release-v0.1.0-blue)
 
-</div>
-
 A minimal terminal app to interact with Tuya/SmartLife based smart bulbs. Works entirely on Local LAN, with no cloud round-trip, or hub requirement. Commands land instantly and keep working even with the internet down, because nothing leaves the network.
+
+</div>
 
 ## Why it exists & what it does differently
 
