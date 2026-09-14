@@ -2,6 +2,7 @@
 
 # Lumen
 
+![Open Source](https://img.shields.io/badge/Open%20Source-MIT-brightgreen?logo=opensourceinitiative&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows&logoColor=white)
 ![Language](https://img.shields.io/badge/Language-Python%203.11%2B-3776AB?logo=python&logoColor=white)
 ![Interface](https://img.shields.io/badge/Interface-Textual%20TUI-AE81FF)
@@ -164,8 +165,21 @@ pip install -e .
 
 `src/lumen/device.py` is the transport and knows nothing about the UI, `tui.py` is the interface, `cli.py` is the command line, and `config.py` loads and saves settings. The modules carry fairly dense comments about the decisions behind them, particularly the threading rules in `tui.py`, where every call into the bulb blocks on a socket.
 
+## Contributing
+
+Lumen is open source under the MIT licence — the whole thing is in this repository, and you are welcome to read it, fork it, change it, or ship something built on it.
+
+The gaps in this project are mostly things one person cannot close alone, so there is a lot here worth picking up:
+
+- **Add your bulb to the tested list.** It has been verified against exactly one device, so every model someone confirms widens what the project can honestly claim. Try yours and [open an issue](https://github.com/exorev07/Lumen/issues) with the make, model and whether it connected — working or not, both are worth knowing.
+- **Get it running on macOS or Linux.** The code is pure Python and the only platform-specific part is the config directory, so it should already work; it just needs someone to run it and fix whatever turns out not to.
+- **Fix a bug you hit.** The modules carry dense comments explaining why they are the way they are, so it is usually possible to work out what a piece of code was meant to do before changing it.
+- **Build something on the roadmap.** [Project status](#project-status) lists what is planned — folding the setup wizard into the app, multi-device support and audio-reactivity are the three big ones, and the first of those would help the most people.
+
+Fork it, and [Development](#development) covers the layout. Small fixes can go straight to a pull request; for anything large, open an issue first so two people do not build the same thing twice.
+
 ## Licence
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). In short: use it for anything, including commercially, as long as the copyright notice travels with it.
 
 The Windows download also bundles the Python runtime and seventeen third-party libraries (MIT, BSD, Apache-2.0 and MPL-2.0). Their licences ship with it as `THIRD-PARTY-LICENSES.txt`, and `lumen --licence` prints Lumen's licence together with all of them.
