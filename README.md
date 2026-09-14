@@ -27,7 +27,7 @@ Lumen on the other hand is a standalone app. No hub, no plugin, and no code to w
 
 ## Install Lumen
 
-### Windows
+### WINDOWS
 
 1. Download the zip from the [Latest Release](https://github.com/exorev07/Lumen/releases) and unzip it.
 
@@ -50,7 +50,7 @@ The installer copies Lumen to your user profile and puts it on your PATH, so `lu
 
 Requires **Windows 10 or 11, 64-bit (x64)**; there is no ARM64 build yet, so it will not run on a Windows-on-ARM device such as a Surface Pro X. Windows will probably warn you the first time — [see below](#windows-may-warn-you-about-it).
 
-### From source (any platform)
+### FROM SOURCE (ANY PLATFORM)
 
 If Python 3.11 or newer is already installed on your machine:
 
@@ -71,11 +71,11 @@ Some antivirus tools may also flag it, or quietly quarantine it.
 
 **The same applies to `install.ps1`,** which PowerShell refuses to run at all, reporting that it "is not digitally signed". This is Windows' default behaviour for any script downloaded from the internet, not something unusual about this one, and [step 2](#windows) in the installation section above clears it with `Unblock-File`.
 
-`Unblock-File` only affects the files you name, which is why it is better than changing your execution policy — that would lower the bar for every script on the machine, and this one does not need that.
+`Unblock-File` only affects the files you name, which is why it is better than changing your execution policy, that would lower the bar for every script on the machine, and this one does not need that.
 
-All of this happens because the binary is **unsigned** as of now. A code-signing certificate costs a few hundred dollars a year, which this project does not currently justify, and unsigned installers bundled by PyInstaller are a common source of false positives — the same warning appears for a great deal of open-source Windows software. It is not a statement that anything was found.
+All of this happens because the binary is **unsigned** as of now. A code-signing certificate costs a few hundred dollars a year, which this project does not currently justify, and unsigned installers bundled by PyInstaller are a common source of false positives, the same warning appears for a great deal of open-source Windows software.
 
-You do not have to take that on trust. Every release lists the SHA-256 of the download, and you can check the file you got against it — substitute the name of the zip you actually downloaded:
+You do not have to take that on trust. Every release lists the SHA-256 of the download, and you can check the file you got against it, substituting the name of the zip you actually downloaded:
 
 ```powershell
 Get-FileHash .\Lumen-0.1.1-win-x64.zip -Algorithm SHA256
