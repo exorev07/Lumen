@@ -30,7 +30,7 @@ Lumen on the other hand is a standalone app. No hub, no plugin, or code modifica
 ### Windows
 
 - Download the zip from the [Latest Release](https://github.com/exorev07/Lumen/releases) and unzip it.
-- Either run `lumen\lumen.exe` as it is, or run the included `install.ps1` to copy it to your user profile and add it to your PATH, so `lumen` works in any new terminal **[Recommended]**. No admin rights needed, and `uninstall.ps1` removes it.
+- Either run `lumen\lumen.exe` as it is, or run the included `install.ps1` to copy it to your user profile and add it to your PATH, so `lumen` works in any new terminal **[Recommended]**. No admin rights needed, and `uninstall.ps1` removes it. Pass `-NoPath` if you would rather it did not touch your PATH. PowerShell will refuse to run the script until you unblock it — [see below](#windows-may-warn-you-about-it).
 
 Requires **Windows 10 or 11, 64-bit (x64)**; there is no ARM64 build yet, so it will not run on a Windows-on-ARM device such as a Surface Pro X. Windows will probably warn you the first time — [see below](#windows-may-warn-you-about-it).
 
@@ -53,7 +53,16 @@ The first time you run `lumen.exe`, Windows SmartScreen will likely show you a b
 
 Some antivirus tools may also flag it, or quietly quarantine it.
 
-This happens because the binary is **unsigned** as of now. A code-signing certificate costs a few hundred dollars a year, which this project does not currently justify, and unsigned installers bundled by PyInstaller are a common source of false positives — the same warning appears for a great deal of open-source Windows software. It is not a statement that anything was found.
+**PowerShell will refuse to run `install.ps1` for the same reason.** It reports that the file "is not digitally signed" and stops. This is Windows' default behaviour for any script downloaded from the internet, not something unusual about this one, and the fix is to clear the download flag on the two scripts and run it again:
+
+```powershell
+Unblock-File .\install.ps1, .\uninstall.ps1
+.\install.ps1
+```
+
+`Unblock-File` only affects the files you name, which is why it is better than changing your execution policy — that would lower the bar for every script on the machine, and this one does not need that.
+
+All of this happens because the binary is **unsigned** as of now. A code-signing certificate costs a few hundred dollars a year, which this project does not currently justify, and unsigned installers bundled by PyInstaller are a common source of false positives — the same warning appears for a great deal of open-source Windows software. It is not a statement that anything was found.
 
 You do not have to take that on trust. Every release lists the SHA-256 of the download, and you can check the file you got against it — substitute the name of the zip you actually downloaded:
 

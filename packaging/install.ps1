@@ -78,6 +78,17 @@ if (-not $NoPath) {
 }
 
 Write-Host ''
-Write-Host 'Done. Run:  lumen' -ForegroundColor Cyan
+# Only claim `lumen` works if it actually will. Under -NoPath nothing was
+# added, so telling the user to run `lumen` sends them to whatever else
+# happens to be on PATH - or to a 'not recognized' error.
+if ($NoPath) {
+    Write-Host 'Done. Run:' -ForegroundColor Cyan
+    Write-Host "  $(Join-Path $Destination 'lumen.exe')"
+    Write-Host ''
+    Write-Host 'Not added to your PATH, as requested. Run install.ps1'
+    Write-Host 'again without -NoPath if you want the short command.'
+} else {
+    Write-Host 'Done. Run:  lumen' -ForegroundColor Cyan
+}
 Write-Host 'First run opens Settings and walks you through the setup.'
 Write-Host ''
