@@ -7,7 +7,7 @@
 ![Language](https://img.shields.io/badge/Language-Python%203.11%2B-3776AB?logo=python&logoColor=white)
 ![Interface](https://img.shields.io/badge/Interface-Textual%20TUI-AE81FF)
 ![Protocol](https://img.shields.io/badge/Protocol-Tuya%203.3%20local-FF6D00)
-![Release](https://img.shields.io/badge/Release-v0.1.0-blue)
+![Release](https://img.shields.io/badge/Release-v0.1.1-blue)
 
 </div>
 
@@ -67,7 +67,7 @@ All of this happens because the binary is **unsigned** as of now. A code-signing
 You do not have to take that on trust. Every release lists the SHA-256 of the download, and you can check the file you got against it — substitute the name of the zip you actually downloaded:
 
 ```powershell
-Get-FileHash .\Lumen-0.1.0-win-x64.zip -Algorithm SHA256
+Get-FileHash .\Lumen-0.1.1-win-x64.zip -Algorithm SHA256
 ```
 
 If the hash matches the one on the release page, the file is byte for byte what was published. You can also read every line of what went into it (that is the whole repository) and [build it yourself](packaging/README.md) if you would rather not run someone else's binary at all.

@@ -33,6 +33,9 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+# The build venv, named by packaging/README.md - .venv/ above does not
+# cover it, and it is a few hundred MB of someone else's code.
+.buildenv/
 
 # Claude Code - local tooling and notes, not part of the project
 CLAUDE.md
