@@ -9,14 +9,62 @@ python -m venv .buildenv
 .buildenv\Scripts\pyinstaller packaging/lumen.spec --noconfirm
 ```
 
-The binary lands in `dist/lumen.exe` (~20 MB). Both `dist/` and
-`release/` are gitignored — the exe belongs on a GitHub Release, not in
-git history, where it could never be removed.
+The app lands in `dist/lumen/` — `lumen.exe` plus an `_internal`
+folder. Then package it for download:
+
+```
+.buildenv\Scripts\python packaging/gen_licenses.py build/lumen > release/THIRD-PARTY-LICENSES.txt
+.buildenv\Scripts\python packaging/make_release.py dist/lumen
+```
+
+That produces `release/Lumen-<version>-win-x64.zip` (~20 MB) with the
+app, `install.ps1`, `uninstall.ps1`, both licence files and a README,
+plus a `.sha256` of the zip. Both `dist/` and `release/` are gitignored
+— a 20 MB artifact belongs on a GitHub Release, not in git history,
+where it could never be removed.
+
+**It is a onedir build, not onefile,** and that is deliberate. A onefile
+binary unpacks itself to a temp directory on every run: measured here,
+that is the difference between 1.03s and 0.25s of startup, and the
+self-extraction is exactly the behaviour antivirus heuristics flag on an
+unsigned executable. The zip compresses to about the same size a onefile
+exe did, so it costs nothing to ship the folder.
 
 Build from a **clean venv with the package installed**, not from the
 source tree: PyInstaller bundles what it can import, so building against
 `src/` on `PYTHONPATH` can hide a packaging mistake that a user would
 hit. Same reasoning as the `src/` layout itself.
+
+## Licences are part of the build, not an afterthought
+
+The exe is a **binary redistribution** of seventeen third-party libraries
+(MIT, BSD, Apache-2.0, MPL-2.0), and all of those licences require their
+text to travel with the binary. Shipping the exe alone is a violation, so
+regenerate the licence file whenever dependencies change:
+
+```
+.buildenv\Scripts\python packaging/gen_licenses.py build/lumen > release/THIRD-PARTY-LICENSES.txt
+```
+
+Run it **after** the build and against the same environment, because it
+derives the package list from PyInstaller's own TOC files rather than
+from a hand-written list - a hand-kept list goes stale silently the
+moment a dependency is added, which is the failure mode worth designing
+out. It exits non-zero if the build directory is missing, and warns on
+stderr for any package that ships no licence file.
+
+The result is also **embedded in the exe** (the `datas` entry in the
+spec) and printed by `lumen --licence`, so the obligation is met by the
+artifact itself and not only by the files next to it. `version_info.txt`
+puts the copyright and MIT notice in the binary's Windows version
+resource, where Explorer shows it under Properties > Details.
+
+One trap if you edit `gen_licenses.py`: modern wheels keep their licence
+at `dist-info/licenses/LICENSE`, and `importlib.metadata`'s
+`dist.read_text()` resolves relative to site-packages and returns `None`
+for it. Read the path from `dist._path` instead. Getting this wrong
+reports "ships no licence file" for *every* package, which looks like a
+finding about the packages rather than a bug in the script.
 
 ## Two things in `lumen.spec` that are load-bearing
 

@@ -8,9 +8,13 @@ nothing leaves your network.
 
 ## Install
 
-**Windows, no Python needed** — download `lumen.exe` from
-[Releases](https://github.com/exorev07/Lumen/releases), then run it from
-a terminal. Put it on your PATH to use it as just `lumen` anywhere.
+**Windows, no Python needed** — download the zip from
+[Releases](https://github.com/exorev07/Lumen/releases) and unzip it.
+Either run `lumen\lumen.exe` as it is, or run the included
+`install.ps1` to copy it to your user profile and add it to your PATH,
+so `lumen` works in any new terminal. No admin rights needed, and
+`uninstall.ps1` undoes it.
+
 Requires **Windows 10 or 11, 64-bit (x64)**; there is no ARM64 build yet,
 so it will not run on a Windows-on-ARM device such as a Surface Pro X.
 Windows will probably warn you the first time — see
@@ -51,7 +55,7 @@ You do not have to take that on trust. Every release lists the SHA-256 of
 the binary, and you can check the file you downloaded against it:
 
 ```powershell
-Get-FileHash lumen.exe -Algorithm SHA256
+Get-FileHash Lumen-0.1.0-win-x64.zip -Algorithm SHA256
 ```
 
 If the hash matches the one on the release page, the file is byte for
@@ -238,3 +242,8 @@ where every call into the bulb blocks on a socket.
 ## Licence
 
 MIT — see [LICENSE](LICENSE).
+
+The Windows download also bundles the Python runtime and seventeen
+third-party libraries (MIT, BSD, Apache-2.0 and MPL-2.0). Their licences
+ship with it as `THIRD-PARTY-LICENSES.txt`, and `lumen --licence` prints
+Lumen's licence together with all of them.
