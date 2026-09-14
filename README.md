@@ -13,6 +13,12 @@
 
 A minimal terminal app to interact with Tuya/SmartLife based smart bulbs. Works entirely on Local LAN, with no cloud round-trip, or hub requirement. Commands land instantly and keep working even with the internet down, because nothing leaves the network.
 
+<div align="center">
+
+<img src="assets/lumen-tui.png" alt="Lumen running in Windows Terminal, showing the status line, mode selector, brightness bar and colour swatches" width="700">
+
+</div>
+
 ## Why it exists & what it does differently
 
 Local Tuya control is well-covered ground, but almost all of it is a *plugin* — `tuya-local` and `localtuya` run inside Home Assistant, `homebridge-tuya` inside Homebridge. Standing up a hub to toggle one device is absurd. The rest are libraries: `tinytuya` and `tuyapi` are things you write code against, not things you run.
