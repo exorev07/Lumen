@@ -11,6 +11,14 @@ config.toml
 tuya-data/*
 !tuya-data/README.md
 
+# Build output. `packaging/` IS committed - it is the build recipe - but
+# nothing it produces is: the exe is ~20 MB and belongs on a GitHub
+# Release, not in git history, where it could never be removed.
+release/
+build/
+dist/
+*.egg-info/
+
 # Python
 __pycache__/
 *.py[cod]
