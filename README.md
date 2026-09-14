@@ -6,13 +6,80 @@ cloud round-trip, no hub.
 Commands land instantly and keep working with the internet down, because
 nothing leaves your network.
 
+## Install
+
+**Windows, no Python needed** — download `lumen.exe` from
+[Releases](https://github.com/exorev07/Lumen/releases), then run it from
+a terminal. Put it on your PATH to use it as just `lumen` anywhere.
+Requires **Windows 10 or 11, 64-bit (x64)**; there is no ARM64 build yet,
+so it will not run on a Windows-on-ARM device such as a Surface Pro X.
+Windows will probably warn you the first time — see
+[below](#windows-may-warn-you-about-it).
+
+**With Python** (3.11+, any platform):
+
 ```
-pip install lumen-control
+git clone https://github.com/exorev07/Lumen
+cd Lumen
+pip install .
 lumen
 ```
 
+> `pip install lumen-control` will be the one-liner once the package is
+> published to PyPI — that has not happened yet, so use the clone above
+> for now.
+
 Press `s` on first run and the app walks you through getting your
 device's key. There is no config file to hand-edit.
+
+## Windows may warn you about it
+
+The first time you run `lumen.exe`, Windows SmartScreen will likely show
+a blue "Windows protected your PC" box. Click **More info**, then **Run
+anyway**.
+
+Some antivirus tools may also flag it, or quietly quarantine it.
+
+This happens because the binary is **unsigned**. A code-signing
+certificate costs a few hundred dollars a year, which this project does
+not currently justify, and unsigned installers bundled by PyInstaller
+are a common source of false positives — the same warning appears for a
+great deal of open-source Windows software. It is not a statement that
+anything was found.
+
+You do not have to take that on trust. Every release lists the SHA-256 of
+the binary, and you can check the file you downloaded against it:
+
+```powershell
+Get-FileHash lumen.exe -Algorithm SHA256
+```
+
+If the hash matches the one on the release page, the file is byte for
+byte what was published. You can also read every line of what went into
+it — that is the whole repository — and
+[build it yourself](packaging/README.md) if you would rather not run
+someone else's binary at all.
+
+## Project status
+
+Lumen is early but usable: everything documented below works, and it is
+what I use to drive my own bulb daily. It is still a work in progress
+rather than a finished product, so expect the occasional rough edge and
+expect things to keep arriving — music reactivity and support for more
+than one device at a time are both planned.
+
+Two limits are worth knowing before you start, both of them about
+breadth of testing rather than anything known to be broken:
+
+- **One bulb has actually been tested against it** — a Syska
+  SSK-SMW-12W-5C. Nothing in the code is specific to it, so other Tuya /
+  SmartLife colour bulbs should work, but that is reasoning rather than
+  evidence until someone tries. See [Supported devices](#supported-devices).
+- **Only Windows has been tested.** macOS and Linux should be fine —
+  the code is pure Python and the platform-specific part is just
+  choosing a config directory — but neither has been run in anger.
+
+Reports either way are genuinely useful, working or not.
 
 ## Why this exists
 
@@ -102,6 +169,11 @@ config directory:
 | macOS | `~/Library/Application Support/lumen/config.toml` |
 | Linux | `$XDG_CONFIG_HOME/lumen/config.toml`, else `~/.config/lumen/` |
 
+The Windows path is the one in daily use; the macOS and Linux paths
+follow the usual convention for each platform but have not yet been
+exercised on a real machine. If Lumen puts its config somewhere
+surprising on yours, that is worth an issue.
+
 It holds your local key, so do not commit or share it. If you would
 rather keep the key out of a file, set `LUMEN_DEVICE_ID`,
 `LUMEN_LOCAL_KEY` and `LUMEN_IP` in the environment instead — those win
@@ -112,14 +184,38 @@ over the file.
 Developed against a Syska SSK-SMW-12W-5C (12W B22D RGB), but nothing here
 is Syska-specific: it speaks Tuya protocol 3.3 to a category `dj`
 (standard colour light) device, so most Tuya / SmartLife colour bulbs
-should work. If yours does, or does not, please open an issue — that is
-the most useful thing you can contribute right now.
+should work — though that is an argument from how the protocol works,
+not a claim anyone has verified. If yours does work, or does not, please
+open an issue: with a sample size of one, that is the most useful thing
+you can contribute right now.
 
-Only one device at a time, for the moment.
+Only one device at a time, for the moment. Multi-device support is
+planned, but one bulb is getting finished first.
+
+## If the app will not start
+
+Almost always one of two things, both specific to the `.exe`:
+
+- **The display is garbled, or colours and borders look wrong.** Run it
+  from [Windows Terminal](https://aka.ms/terminal) rather than from the
+  older `conhost` console window. Lumen draws a full-screen interface,
+  and the legacy console renders it poorly. Windows 11 uses Windows
+  Terminal by default, so this mostly affects Windows 10.
+- **"VCRUNTIME140.dll was not found", or it exits instantly with no
+  message.** Install the
+  [Microsoft Visual C++ Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe).
+  It ships with Windows 10 and 11, so this is rare, but a freshly
+  imaged machine can be missing it.
+
+The Python install has neither problem. If something else goes wrong,
+please [open an issue](https://github.com/exorev07/Lumen/issues) —
+including what Windows version you are on is genuinely useful, since
+this has so far only been run on a handful of machines.
 
 ## When it stops working
 
-See [TROUBLESHOOTING.md](TROUBLESHOOTING.md). The usual cause is a
+Once it is running and talking to the bulb, see
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md). The usual cause is a
 rotated local key: re-pairing the bulb to a new WiFi network rotates it,
 and you will need to re-run the wizard. Moving routers while keeping the
 same SSID does not. An expired Tuya free trial does not affect local
