@@ -11,6 +11,15 @@ config.toml
 tuya-data/*
 !tuya-data/README.md
 
+# The wizard writes these into whatever directory it was run from, so the
+# rule above does not catch a run from the repo root - and devices.json
+# holds the local key of every device on the account, not just this one.
+# Matched at any depth deliberately: the point is that the cwd is the
+# user's choice, not ours.
+devices.json
+snapshot.json
+tuyascan.json
+
 # Build output. `packaging/` IS committed - it is the build recipe - but
 # nothing it produces is: the exe is ~20 MB and belongs on a GitHub
 # Release, not in git history, where it could never be removed.
