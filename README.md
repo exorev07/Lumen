@@ -7,7 +7,6 @@
 ![Language](https://img.shields.io/badge/Language-Python%203.11%2B-3776AB?logo=python&logoColor=white)
 ![Interface](https://img.shields.io/badge/Interface-Textual%20TUI-AE81FF)
 ![Protocol](https://img.shields.io/badge/Protocol-Tuya%203.3%20local-FF6D00)
-![Licence](https://img.shields.io/badge/Licence-MIT-green)
 ![Release](https://img.shields.io/badge/Release-v0.1.0-blue)
 
 </div>
