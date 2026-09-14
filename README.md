@@ -23,14 +23,30 @@ A minimal terminal app to interact with Tuya/SmartLife based smart bulbs. Works 
 
 Local Tuya control is well-covered ground, but almost all of it is a *plugin* — `tuya-local` and `localtuya` run inside Home Assistant, `homebridge-tuya` inside Homebridge. Standing up a hub to toggle one device is absurd. The rest are libraries: `tinytuya` and `tuyapi` are things you write code against, not things you run.
 
-Lumen on the other hand is a standalone app. No hub, no plugin, or code modification required; it is built such that anyone with minimal technical knowledge can set up their device, and control it with a very clean and minimal UI.
+Lumen on the other hand is a standalone app. No hub, no plugin, and no code to write; it is built such that anyone with minimal technical knowledge can set up their device, and control it with a very clean and minimal UI.
 
 ## Install Lumen
 
 ### Windows
 
-- Download the zip from the [Latest Release](https://github.com/exorev07/Lumen/releases) and unzip it.
-- Either run `lumen\lumen.exe` as it is, or run the included `install.ps1` to copy it to your user profile and add it to your PATH, so `lumen` works in any new terminal **[Recommended]**. No admin rights needed, and `uninstall.ps1` removes it. Pass `-NoPath` if you would rather it did not touch your PATH. PowerShell will refuse to run the script until you unblock it — [see below](#windows-may-warn-you-about-it).
+1. Download the zip from the [Latest Release](https://github.com/exorev07/Lumen/releases) and unzip it.
+
+2. Shift + right-click inside the unzipped folder and choose **Open in Terminal** (or **Open PowerShell window here**), then run:
+
+   ```powershell
+   Unblock-File .\install.ps1, .\uninstall.ps1
+   .\install.ps1
+   ```
+
+   **Note:** Double-clicking `install.ps1` will not work — Windows opens `.ps1` files in Notepad instead of running them. `Unblock-File` clears the flag Windows puts on downloaded scripts; without it PowerShell refuses to run the installer — [see below](#windows-may-warn-you-about-it).
+
+3. Open a **new** terminal — a running one cannot see the PATH change — and run:
+
+   ```powershell
+   lumen
+   ```
+
+The installer copies Lumen to your user profile and puts it on your PATH, so `lumen` works from any terminal. No admin rights are needed, nothing is written outside your own profile, and `uninstall.ps1` undoes it. Pass `-NoPath` if you would rather it did not touch your PATH; `lumen\lumen.exe` also runs fine straight from the folder you unzipped, without installing anything.
 
 Requires **Windows 10 or 11, 64-bit (x64)**; there is no ARM64 build yet, so it will not run on a Windows-on-ARM device such as a Surface Pro X. Windows will probably warn you the first time — [see below](#windows-may-warn-you-about-it).
 
@@ -53,12 +69,7 @@ The first time you run `lumen.exe`, Windows SmartScreen will likely show you a b
 
 Some antivirus tools may also flag it, or quietly quarantine it.
 
-**PowerShell will refuse to run `install.ps1` for the same reason.** It reports that the file "is not digitally signed" and stops. This is Windows' default behaviour for any script downloaded from the internet, not something unusual about this one, and the fix is to clear the download flag on the two scripts and run it again:
-
-```powershell
-Unblock-File .\install.ps1, .\uninstall.ps1
-.\install.ps1
-```
+**The same applies to `install.ps1`,** which PowerShell refuses to run at all, reporting that it "is not digitally signed". This is Windows' default behaviour for any script downloaded from the internet, not something unusual about this one, and [step 2](#windows) in the installation section above clears it with `Unblock-File`.
 
 `Unblock-File` only affects the files you name, which is why it is better than changing your execution policy — that would lower the bar for every script on the machine, and this one does not need that.
 
@@ -89,9 +100,9 @@ The bulb encrypts every local command with a key that only Tuya issues, so you n
 
 6. Give the wizard the **Access ID** and **Access Secret** from your project's overview page, and the data centre you picked in step 2.
 7. The wizard writes a `devices.json` file in whichever folder you ran it from. Find your bulb in it and copy out its `"id"` and `"key"` — those are the **Device ID** and **Local Key** that go in Lumen's settings window.
-8. The IP is optional — you can leave it blank, Lumen scans for the bulb automatically and then stores where it found it. A DHCP change costs one ~12s rescan and fixes itself.
+8. The IP is optional, you can leave it blank, Lumen scans for the bulb automatically and then stores where it found it. A DHCP change costs one ~12s rescan and fixes itself.
 
-> **This step needs Python, even if you downloaded the Windows exe.** The wizard is a separate tool that talks to Tuya's cloud, and it is currently the only way to get a local key out of them — the Smart Life app never shows it to you. You only ever do this once, and nothing touches the cloud again afterwards. Folding the wizard into Lumen's own settings window, so that none of this is needed, is the next thing planned.
+> **This step needs Python, even if you downloaded the Lumen.exe on Windows.** The wizard is a separate tool that talks to Tuya's cloud, and it is currently the only way to get a local key out of them; the Smart Life app never shows it to you. You only ever do this once, and nothing touches the cloud again afterwards. Folding the wizard into Lumen's own settings window, so that none of this is needed, is the next thing planned.
 
 ### Where settings live
 
