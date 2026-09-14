@@ -1,6 +1,17 @@
+<div align="center">
+
 # Lumen
 
-A minimal Terminal app to interact with Tuya/SmartLife based smart bulbs. Works entirely on Local LAN, with no cloud round-trip, or hub requirement. Commands land instantly and keep working even with the internet down, because nothing leaves the network.
+![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows&logoColor=white)
+![Language](https://img.shields.io/badge/Language-Python%203.11%2B-3776AB?logo=python&logoColor=white)
+![Interface](https://img.shields.io/badge/Interface-Textual%20TUI-AE81FF)
+![Protocol](https://img.shields.io/badge/Protocol-Tuya%203.3%20local-FF6D00)
+![Licence](https://img.shields.io/badge/Licence-MIT-green)
+![Release](https://img.shields.io/badge/Release-v0.1.0-blue)
+
+</div>
+
+A minimal terminal app to interact with Tuya/SmartLife based smart bulbs. Works entirely on Local LAN, with no cloud round-trip, or hub requirement. Commands land instantly and keep working even with the internet down, because nothing leaves the network.
 
 ## Why it exists & what it does differently
 
