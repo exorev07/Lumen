@@ -38,9 +38,9 @@ Lumen on the other hand is a standalone app. No hub, no plugin, and no code to w
    .\install.ps1
    ```
 
-   **Note:** Double-clicking `install.ps1` will not work — Windows opens `.ps1` files in Notepad instead of running them. `Unblock-File` clears the flag Windows puts on downloaded scripts; without it PowerShell refuses to run the installer — [see below](#windows-may-warn-you-about-it).
+   **Note:** Double-clicking `install.ps1` will not work, Windows opens `.ps1` files in Notepad instead of running them. `Unblock-File` clears the flag Windows puts on downloaded scripts; without it PowerShell refuses to run the installer — [see below](#windows-may-warn-you-about-it).
 
-3. Open a **new** terminal — a running one cannot see the PATH change — and run:
+3. Open a **new** terminal (a running one cannot see the PATH change) and run:
 
    ```powershell
    lumen
